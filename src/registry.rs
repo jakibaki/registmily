@@ -30,11 +30,7 @@ macro_rules! definition {
                 return Err("Sender channel died");
             };
 
-            let res = tokio::select! {
-                val = recv => val
-            };
-
-            res.map_err(|_| "Oneshot channel died")
+            recv.await.map_err(|_| "Oneshot channel died")
         }
     };
 }
