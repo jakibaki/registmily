@@ -16,20 +16,6 @@ async fn main() {
 
     info!("Starting up");
 
-
-
-    /*
-    axum::Server::bind(&"0.0.0.0:8080".parse().unwrap())
-        .serve(
-            Router::new()
-                .route("/add/:lhs/:rhs", get(registry::add))
-                .layer(axum::extract::Extension(sender))
-                .into_make_service(),
-        )
-        .await
-        .unwrap();
-*/
-
     apiserver::APIServer::serve(sender).await;
 
     jh.join().unwrap();
