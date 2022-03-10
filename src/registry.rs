@@ -1,31 +1,20 @@
 use axum::extract;
-use git2::PackBuilder;
 use git2::Repository;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use serde_json::Value;
-use sha2::digest::typenum::private::IsLessPrivate;
-use sha2::{Digest, Sha256};
-use std::env;
 use std::fs;
 use std::fs::File;
 
 use std::fs::OpenOptions;
 use std::io::BufRead;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-use std::{thread, time};
 use thiserror::Error;
-use tokio::sync::RwLock;
 use tracing::info;
 
 #[derive(Error, Debug)]
 pub enum PublishError {
-    #[error("checksum invalid")]
-    ChecksumInvalid,
-    #[error("checksum doesn't match")]
-    ChecksumWrong,
     #[error("error happened while writing file: {0}")]
     WriteError(std::io::Error),
     #[error("Invalid json provided")]
@@ -130,27 +119,6 @@ pub type SyncSender =
 pub type SyncReciever =
     tokio::sync::mpsc::Receiver<(Operation, tokio::sync::oneshot::Sender<RegistryResponse>)>;
 
-macro_rules! definition {
-    ($name:ident, $operation:ident) => {
-        pub async fn $name(
-            operation: Operation,
-            handler: extract::Extension<
-                tokio::sync::mpsc::Sender<(
-                    Operation,
-                    tokio::sync::oneshot::Sender<RegistryResponse>,
-                )>,
-            >,
-        ) -> Result<RegistryResponse, &'static str> {
-            let (sender, recv) = tokio::sync::oneshot::channel();
-            if handler.send((operation, sender)).await.is_err() {
-                return Err("Sender channel died");
-            };
-
-            recv.await.map_err(|_| "Oneshot channel died")
-        }
-    };
-}
-
 #[derive(Debug, Clone)]
 pub enum Operation {
     Publish(Package, CrateFile),
@@ -165,11 +133,6 @@ pub enum RegistryResponse {
     AddOwner,
     DelOwner,
 }
-
-definition!(publish, Publish);
-definition!(yank, Yank);
-definition!(add_owner, AddOwner);
-definition!(del_owner, DelOwner);
 
 pub struct Registry {
     repo: Repository,
@@ -207,8 +170,6 @@ pub fn get_package_git_folder(repo_path: &str, package_name: &str) -> PathBuf {
     path
 }
 
-
-
 fn git_credentials_callback(
     _user: &str,
     user_from_url: Option<&str>,
@@ -226,7 +187,6 @@ fn git_credentials_callback(
 
     git2::Cred::ssh_key(user, None, &ssh_key_path, None)
 }
-
 
 impl Registry {
     pub fn new(git_location: &str, storage_location: &str) -> Self {
@@ -272,7 +232,6 @@ impl Registry {
             )
             .unwrap();
 
-            
         if let Ok(mut remote) = self.repo.find_remote("origin") {
             let mut callbacks = git2::RemoteCallbacks::new();
             callbacks.credentials(git_credentials_callback);
@@ -280,25 +239,12 @@ impl Registry {
             let mut opts = git2::PushOptions::new();
             opts.remote_callbacks(callbacks);
 
-
             remote
                 .push(&["refs/heads/main:refs/heads/main"], Some(&mut opts))
                 .unwrap();
         } else {
             info!("No remote found");
         }
-    }
-
-    // TODO: move out of registry struct to apiserver, this does not belong in sync stuff
-    fn dl(&self, sha256sum: &str) -> Result<CrateFile, std::io::Error> {
-        // todo2: dl endpoint is unauthorized, someone could theoretically find out all mirrored packages by iterating through all sha256 from crates.io,
-        // don't really know what to do about that beyond maybe putting some secret string in dl endpoint path
-
-        let mut path = PathBuf::from(&self.storage_location);
-
-        path.push(sha256sum);
-        path.set_extension("crate");
-        fs::read(path)
     }
 
     pub fn publish(&self, pkg: &Package, crate_file: &CrateFile) -> Result<(), PublishError> {
@@ -363,7 +309,11 @@ impl Registry {
         }
         drop(outfile);
 
-        let message = if yank_val {"yanked crate"} else {"unyanked crate"};
+        let message = if yank_val {
+            "yanked crate"
+        } else {
+            "unyanked crate"
+        };
 
         self.commit_git_files(vec![repo_path.as_path()], message);
     }
@@ -407,6 +357,18 @@ impl Registry {
 
         self.commit_git_files(vec![path.as_path()], "deleted owner from crate");
     }
+}
+
+pub async fn run_task(
+    operation: Operation,
+    handler: axum::extract::Extension<SyncSender>,
+) -> Result<RegistryResponse, &'static str> {
+    let (sender, recv) = tokio::sync::oneshot::channel();
+    if handler.send((operation, sender)).await.is_err() {
+        return Err("Sender channel died");
+    };
+
+    recv.await.map_err(|_| "Oneshot channel died")
 }
 
 pub fn handler(git_location: &str, storage_location: &str, mut recv: SyncReciever) {

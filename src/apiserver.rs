@@ -13,7 +13,6 @@ use sha2::{Digest, Sha256};
 use crate::registry;
 use serde_json::{json, Value};
 use tracing::info;
-use tracing_subscriber::{self, registry::Data};
 
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
@@ -64,7 +63,7 @@ async fn publish(
     let hash = hash.finalize();
     let hash = hex::encode(hash);
 
-    match registry::publish(
+    match registry::run_task(
         registry::Operation::Publish(registry::Package::from_pub(crate_json, hash), crate_data),
         sender,
     )
@@ -84,7 +83,7 @@ async fn yank(
 ) -> Json<Value> {
     info!("{} {}", crate_name, version);
 
-    match registry::yank(registry::Operation::Yank(crate_name, version, true), sender)
+    match registry::run_task(registry::Operation::Yank(crate_name, version, true), sender)
         .await
         .unwrap()
     {
@@ -101,7 +100,7 @@ async fn unyank(
 ) -> Json<Value> {
     info!("{} {}", crate_name, version);
 
-    match registry::yank(
+    match registry::run_task(
         registry::Operation::Yank(crate_name, version, false),
         sender,
     )
