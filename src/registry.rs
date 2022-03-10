@@ -189,6 +189,13 @@ fn git_credentials_callback(
     git2::Cred::ssh_key(user, None, &ssh_key_path, None)
 }
 
+fn crate_exists(repo_path: &str, crate_name: &str) -> bool {
+    assert!(!crate_name.contains("."));
+    assert!(!crate_name.contains("/"));
+    let path = get_package_git_path(repo_path, crate_name);
+    Path::new(&path).exists()
+}
+
 impl Registry {
     pub fn new(git_location: &str, storage_location: &str) -> Self {
         info!("Opening {}", git_location);
@@ -203,6 +210,7 @@ impl Registry {
             storage_location: String::from(storage_location),
         }
     }
+
 
     pub fn commit_git_files(&self, paths: Vec<&Path>, message: &str) {
         let mut index = self.repo.index().unwrap();
@@ -332,18 +340,20 @@ impl Registry {
         }
     }
 
-    pub fn add_owner(&self, crate_name: String, owner: &str) {
+    pub fn add_owner(&self, crate_name: String, owner: &str) { // TODO: error type
+        if !crate_exists(&self.repo_path, &crate_name) {
+            return;
+        }
+
         let mut path = get_package_git_path(&self.repo_path, &crate_name);
         path.set_extension("owners");
-        let cur_owners = match fs::read_to_string(&path) {
-            Ok(owners) => owners,
-            Err(_) => String::from(""),
+        let mut cur_owners: Vec<String> = match fs::read_to_string(&path) {
+            Ok(owners) => owners.split("\n").map(|x| String::from(x)).collect(),
+            Err(_) => vec![],
         };
 
-        let mut cur_owners: Vec<&str> = cur_owners.split("\n").collect();
-
-        if !cur_owners.contains(&owner) {
-            cur_owners.push(owner);
+        if !cur_owners.contains(&String::from(owner)) {
+            cur_owners.push(String::from(owner));
         }
 
         let cur_owners = cur_owners.join("\n");
@@ -353,7 +363,11 @@ impl Registry {
         self.commit_git_files(vec![path.as_path()], "added owner to crate");
     }
 
-    pub fn del_owner(&self, crate_name: String, owner: &str) {
+    pub fn del_owner(&self, crate_name: String, owner: &str) { // TODO: error type
+        if !crate_exists(&self.repo_path, &crate_name) {
+            return;
+        }
+
         let mut path = get_package_git_path(&self.repo_path, &crate_name);
         path.set_extension("owners");
         let cur_owners = match fs::read_to_string(&path) {
