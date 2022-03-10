@@ -1,12 +1,14 @@
 use axum::extract;
+use git2::PackBuilder;
 use git2::Repository;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use serde_json::Value;
+use sha2::digest::typenum::private::IsLessPrivate;
 use sha2::{Digest, Sha256};
+use std::env;
 use std::fs;
 use std::fs::File;
-
 
 use std::fs::OpenOptions;
 use std::io::BufRead;
@@ -31,18 +33,52 @@ pub enum PublishError {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublishPackage {
+    pub name: String,
+    pub vers: String,
+    pub deps: Vec<PublishDep>,
+    pub features: Value,
+    pub authors: Vec<String>,
+    pub description: Value,
+    pub documentation: Value,
+    pub homepage: Value,
+    pub readme: Value,
+    pub readme_file: Value,
+    pub keywords: Vec<Value>,
+    pub categories: Vec<Value>,
+    pub license: Value,
+    pub license_file: Value,
+    pub repository: Value,
+    pub badges: Value,
+    pub links: Value,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublishDep {
+    pub name: String,
+    pub version_req: String,
+    pub features: Vec<String>,
+    pub optional: bool,
+    pub default_features: bool,
+    pub target: Value,
+    pub kind: String,
+    pub registry: Value,
+    pub explicit_name_in_toml: Value,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Package {
     pub name: String,
     pub vers: String,
-    pub deps: Vec<PackageDeps>,
+    pub deps: Vec<PackageDep>,
     pub cksum: String,
-    pub features: PackageFeatures,
+    pub features: Value,
     pub yanked: bool,
     pub links: Value,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PackageDeps {
+pub struct PackageDep {
     pub name: String,
     pub req: String,
     pub features: Vec<String>,
@@ -54,21 +90,45 @@ pub struct PackageDeps {
     pub package: Value,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PackageFeatures {
-    pub extras: Vec<String>,
+impl From<PublishDep> for PackageDep {
+    fn from(pub_dep: PublishDep) -> Self {
+        Self {
+            name: pub_dep.name,
+            req: pub_dep.version_req,
+            features: pub_dep.features,
+            optional: pub_dep.optional,
+            default_features: pub_dep.default_features,
+            target: pub_dep.target,
+            kind: pub_dep.kind,
+            registry: pub_dep.registry,
+            package: pub_dep.explicit_name_in_toml,
+        }
+    }
+}
+
+impl Package {
+    pub fn from_pub(pub_pkg: PublishPackage, checksum: String) -> Self {
+        Self {
+            name: pub_pkg.name,
+            vers: pub_pkg.vers,
+            deps: pub_pkg
+                .deps
+                .into_iter()
+                .map(|x| PackageDep::from(x))
+                .collect(),
+            cksum: checksum,
+            features: pub_pkg.features,
+            yanked: false,
+            links: pub_pkg.links,
+        }
+    }
 }
 
 pub type CrateFile = Vec<u8>;
-
-#[derive(Debug, Clone, Copy)]
-pub enum Operation {
-    Add(i64, i64),
-}
-
-pub enum RegistryResponse {
-    Add(String),
-}
+pub type SyncSender =
+    tokio::sync::mpsc::Sender<(Operation, tokio::sync::oneshot::Sender<RegistryResponse>)>;
+pub type SyncReciever =
+    tokio::sync::mpsc::Receiver<(Operation, tokio::sync::oneshot::Sender<RegistryResponse>)>;
 
 macro_rules! definition {
     ($name:ident, $operation:ident) => {
@@ -91,11 +151,82 @@ macro_rules! definition {
     };
 }
 
+#[derive(Debug, Clone)]
+pub enum Operation {
+    Publish(Package, CrateFile),
+    Yank(String, String, bool),
+    AddOwner(String, String),
+    DelOwner(String, String),
+}
+
+pub enum RegistryResponse {
+    Publish(Result<(), PublishError>),
+    Yank,
+    AddOwner,
+    DelOwner,
+}
+
+definition!(publish, Publish);
+definition!(yank, Yank);
+definition!(add_owner, AddOwner);
+definition!(del_owner, DelOwner);
+
 pub struct Registry {
     repo: Repository,
-    repo_path: String,
+    pub repo_path: String,
     storage_location: String,
 }
+
+pub fn get_package_git_path(repo_path: &str, package_name: &str) -> PathBuf {
+    let mut folder = get_package_git_folder(repo_path, package_name);
+    folder.push(package_name);
+    folder
+}
+
+pub fn get_package_git_folder(repo_path: &str, package_name: &str) -> PathBuf {
+    // ensure that there can be no path traversal bugs!
+    // proper crate name checking needs to be done elsewhere
+    // if this ever panics in production it just saved you from a bad vuln :p
+    assert!(!package_name.contains("."));
+
+    let package_name = package_name.to_lowercase();
+    let mut path = PathBuf::from(repo_path);
+    match package_name.len() {
+        0 => panic!("invalid crate name passed to get_package_git_path!"),
+        1 => path.push("1"),
+        2 => path.push("2"),
+        3 => {
+            path.push("3");
+            path.push(&package_name[0..1]);
+        }
+        _ => {
+            path.push(&package_name[0..=1]);
+            path.push(&package_name[2..=3]);
+        }
+    }
+    path
+}
+
+
+
+fn git_credentials_callback(
+    _user: &str,
+    user_from_url: Option<&str>,
+    cred: git2::CredentialType,
+) -> Result<git2::Cred, git2::Error> {
+    let user = user_from_url.unwrap_or("git");
+
+    if cred.contains(git2::CredentialType::USERNAME) {
+        return git2::Cred::username(user);
+    }
+
+    let mut ssh_key_path = dirs::home_dir().unwrap();
+    ssh_key_path.push(".ssh");
+    ssh_key_path.push("id_rsa");
+
+    git2::Cred::ssh_key(user, None, &ssh_key_path, None)
+}
+
 
 impl Registry {
     pub fn new(git_location: &str, storage_location: &str) -> Self {
@@ -112,32 +243,50 @@ impl Registry {
         }
     }
 
-    pub fn get_package_git_path(&self, package_name: &str) -> PathBuf {
+    pub fn commit_git_files(&self, paths: Vec<&Path>, message: &str) {
+        let mut index = self.repo.index().unwrap();
 
-        // ensure that there can be no path traversal bugs!
-        // proper crate name checking needs to be done elsewhere
-        // if this ever panics in production it just saved you from a bad vuln :p
-        assert!(!package_name.contains("."));
+        for path in paths {
+            let path = pathdiff::diff_paths(path, Path::new(&self.repo_path)).unwrap();
 
-        let package_name = package_name.to_lowercase();
-        let mut path = PathBuf::from(&self.repo_path);
-        match package_name.len() {
-            0 => panic!("invalid crate name passed to get_package_git_path!"),
-            1 => path.push("1"),
-            2 => path.push("2"),
-            3 => {
-                path.push("3");
-                path.push(&package_name[0..1]);
-            }
-            _ => {
-                path.push(&package_name[0..=1]);
-                path.push(&package_name[2..=3]);
-            }
+            index.add_path(&path.as_path()).unwrap();
         }
+        index.write().unwrap();
+        let sig = self.repo.signature().unwrap();
+        let tree_id = index.write_tree().unwrap();
 
-        path.push(package_name);
+        let mut parents = Vec::new();
+        if let Some(parent) = self.repo.head().ok().map(|h| h.target().unwrap()) {
+            parents.push(self.repo.find_commit(parent).unwrap())
+        }
+        let parents = parents.iter().collect::<Vec<_>>();
 
-        path
+        self.repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                message,
+                &self.repo.find_tree(tree_id).unwrap(),
+                &parents,
+            )
+            .unwrap();
+
+            
+        if let Ok(mut remote) = self.repo.find_remote("origin") {
+            let mut callbacks = git2::RemoteCallbacks::new();
+            callbacks.credentials(git_credentials_callback);
+
+            let mut opts = git2::PushOptions::new();
+            opts.remote_callbacks(callbacks);
+
+
+            remote
+                .push(&["refs/heads/main:refs/heads/main"], Some(&mut opts))
+                .unwrap();
+        } else {
+            info!("No remote found");
+        }
     }
 
     // TODO: move out of registry struct to apiserver, this does not belong in sync stuff
@@ -155,52 +304,42 @@ impl Registry {
     pub fn publish(&self, pkg: &Package, crate_file: &CrateFile) -> Result<(), PublishError> {
         // TODO: validate pkg
 
-        let mut hash = Sha256::new();
-        hash.update(crate_file);
-        let hash = hash.finalize();
-        let hash = hex::encode(hash);
-        if hash != str::to_lowercase(&pkg.cksum) {
-            return Err(PublishError::ChecksumWrong);
-        }
+        // TODO: avoid double publish
 
         // TODO: validate owner, need auth token
 
-        // TODO: write and commit package file
-
         // TODO: validate package name
-        let repo_path = self.get_package_git_path(&pkg.name);
+        let repo_path = get_package_git_path(&self.repo_path, &pkg.name);
 
-        // TODO error handle this lol
+        fs::create_dir_all(get_package_git_folder(&self.repo_path, &pkg.name)).unwrap();
+
         let json_str = serde_json::to_string(pkg).map_err(|_| PublishError::JsonInvalid)?;
 
         let mut file = OpenOptions::new()
             .create(true)
             .write(true)
             .append(true)
-            .open(repo_path)
+            .open(&repo_path)
             .map_err(|err| PublishError::WriteError(err))?;
 
-
         let mut cratefile_path = PathBuf::from(&self.storage_location);
-        cratefile_path.push(hash);
+        cratefile_path.push(&pkg.cksum);
         cratefile_path.set_extension("crate");
 
         fs::write(cratefile_path, crate_file).map_err(|err| PublishError::WriteError(err))?;
-    
 
         file.write_fmt(format_args!("{}\n", json_str))
             .map_err(|err| PublishError::WriteError(err))?;
 
         drop(file);
 
-
-
+        self.commit_git_files(vec![repo_path.as_path()], "added crate");
 
         Ok(())
     }
 
     pub fn yank(&self, crate_name: String, version: String, yank_val: bool) {
-        let repo_path = self.get_package_git_path(&crate_name);
+        let repo_path = get_package_git_path(&self.repo_path, &crate_name);
 
         let mut set_yanked = false;
 
@@ -208,53 +347,89 @@ impl Registry {
         let infile = File::open(&repo_path).unwrap();
         let mut outfile = OpenOptions::new().write(true).open(&repo_path).unwrap();
         for line in std::io::BufReader::new(infile).lines() {
-            let mut pkg: Package = serde_json::from_str(&line.unwrap()).unwrap();
+            let line = line.unwrap();
+            if line == "" {
+                continue;
+            }
+
+            let mut pkg: Package = serde_json::from_str(&line).unwrap();
             if pkg.vers == version {
                 pkg.yanked = yank_val;
                 set_yanked = true;
             }
-            outfile.write_fmt(format_args!("{}\n", serde_json::to_string(&pkg).unwrap())).unwrap();
+            outfile
+                .write_fmt(format_args!("{}\n", serde_json::to_string(&pkg).unwrap()))
+                .unwrap();
         }
+        drop(outfile);
+
+        let message = if yank_val {"yanked crate"} else {"unyanked crate"};
+
+        self.commit_git_files(vec![repo_path.as_path()], message);
     }
 
-    // TODO: move out of sync context
-    pub fn list_owners(&self, crate_name: String) -> Vec<String> { // todo Result<>
-        vec![String::from("emily")]
+    pub fn add_owner(&self, crate_name: String, owner: &str) {
+        let mut path = get_package_git_path(&self.repo_path, &crate_name);
+        path.set_extension("owners");
+        let cur_owners = match fs::read_to_string(&path) {
+            Ok(owners) => owners,
+            Err(_) => String::from(""),
+        };
+
+        let mut cur_owners: Vec<&str> = cur_owners.split("\n").collect();
+
+        if !cur_owners.contains(&owner) {
+            cur_owners.push(owner);
+        }
+
+        let cur_owners = cur_owners.join("\n");
+
+        fs::write(&path, cur_owners).unwrap();
+
+        self.commit_git_files(vec![path.as_path()], "added owner to crate");
     }
 
-    pub fn add_owner(&self, owner: String) {
-        // how do I store this best? Can this go into the git repo?
-        unimplemented!();
-    }
+    pub fn del_owner(&self, crate_name: String, owner: &str) {
+        let mut path = get_package_git_path(&self.repo_path, &crate_name);
+        path.set_extension("owners");
+        let cur_owners = match fs::read_to_string(&path) {
+            Ok(owners) => owners,
+            Err(_) => String::from(""),
+        };
 
-    pub fn del_owner(&self, owner: String) {
-        unimplemented!();
-    }
+        let mut cur_owners: Vec<&str> = cur_owners.split("\n").collect();
 
-    // TODO: move this out of sync context
-    pub fn find_crates(&self, query: String) {
-        unimplemented!()
+        cur_owners.retain(|x| x != &owner);
+
+        let cur_owners = cur_owners.join("\n");
+
+        fs::write(&path, cur_owners).unwrap();
+
+        self.commit_git_files(vec![path.as_path()], "deleted owner from crate");
     }
 }
 
-definition!(add, Add);
-
-pub fn handler(
-    git_location: &str,
-    mut recv: tokio::sync::mpsc::Receiver<(
-        Operation,
-        tokio::sync::oneshot::Sender<RegistryResponse>,
-    )>,
-) {
+pub fn handler(git_location: &str, storage_location: &str, mut recv: SyncReciever) {
     // The git2-rs library is not thread safe and needs to stay on the same thread at all points in time due to it's use of environment variables
 
-    let registry = Registry::new(git_location, "storage");
+    let registry = Registry::new(git_location, storage_location);
 
     while let Some((op, oneshot_sender)) = recv.blocking_recv() {
         let _ = oneshot_sender.send(match op {
-            Operation::Add(a, b) => {
-                thread::sleep(time::Duration::from_millis(2000));
-                RegistryResponse::Add((a + b).to_string())
+            Operation::AddOwner(crate_name, owner) => {
+                registry.add_owner(crate_name, &owner);
+                RegistryResponse::AddOwner
+            }
+            Operation::DelOwner(crate_name, owner) => {
+                registry.del_owner(crate_name, &owner);
+                RegistryResponse::DelOwner
+            }
+            Operation::Publish(pkg, crate_file) => {
+                RegistryResponse::Publish(registry.publish(&pkg, &crate_file))
+            }
+            Operation::Yank(crate_name, version, yank_val) => {
+                registry.yank(crate_name, version, yank_val);
+                RegistryResponse::Yank
             }
         });
     }
