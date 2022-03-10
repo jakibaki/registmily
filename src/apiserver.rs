@@ -42,19 +42,35 @@ async fn publish(
     info!("{}", (*data_paths).git_path);
     info!("{}", (*data_paths).storage_path);
 
+    let invalid_publish_err = Json(json!({"errors": [{"detail": "publish request corrupted?"}]}));
+
     // TODO: validate package name
     // todo: handle bad data
 
+    if bytes.len() < 8 {
+        return invalid_publish_err;
+    }
+
     let json_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+    if json_len as usize > bytes.len() - 8 {
+        return invalid_publish_err;
+    }
 
     let crate_json: registry::PublishPackage =
-        serde_json::from_slice(&bytes[4..4 + json_len as usize]).unwrap();
+        match serde_json::from_slice(&bytes[4..4 + json_len as usize]) {
+            Ok(crate_json) => crate_json,
+            Err(_) => return Json(json!({"errors": [{"detail": "invalid crate json"}]})),
+        };
 
     let crate_len = u32::from_le_bytes(
         bytes[4 + json_len as usize..8 + json_len as usize]
             .try_into()
             .unwrap(),
     );
+
+    if json_len as usize + crate_len as usize + 8 < bytes.len() {
+        return invalid_publish_err;
+    }
 
     let crate_data: Vec<u8> =
         bytes[8 + json_len as usize..8 + json_len as usize + crate_len as usize].to_vec();
@@ -82,25 +98,24 @@ async fn yank(
     Path((crate_name, version)): Path<(String, String)>,
     sender: Extension<registry::SyncSender>,
 ) -> Json<Value> {
-    info!("{} {}", crate_name, version);
-
     match registry::run_task(registry::Operation::Yank(crate_name, version, true), sender)
         .await
         .unwrap()
     {
-        registry::RegistryResponse::Yank => info!("yanked successfully!"),
+        registry::RegistryResponse::Yank(res) => match res {
+            Ok(_) => Json(json!({"ok": true})),
+            Err(registry::YankError::CrateNotFoundError) => {
+                Json(json!({"errors": [{"detail": "crate not found!"}]}))
+            }
+        },
         _ => unreachable!("o no"),
-    };
-
-    Json(json!({"ok": true}))
+    }
 }
 
 async fn unyank(
     Path((crate_name, version)): Path<(String, String)>,
     sender: Extension<registry::SyncSender>,
 ) -> Json<Value> {
-    info!("{} {}", crate_name, version);
-
     match registry::run_task(
         registry::Operation::Yank(crate_name, version, false),
         sender,
@@ -108,11 +123,14 @@ async fn unyank(
     .await
     .unwrap()
     {
-        registry::RegistryResponse::Yank => info!("unyanked successfully!"),
+        registry::RegistryResponse::Yank(res) => match res {
+            Ok(_) => Json(json!({"ok": true})),
+            Err(registry::YankError::CrateNotFoundError) => {
+                Json(json!({"errors": [{"detail": "crate not found!"}]}))
+            }
+        },
         _ => unreachable!("o no"),
-    };
-
-    Json(json!({"ok": true}))
+    }
 }
 
 async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl IntoResponse {

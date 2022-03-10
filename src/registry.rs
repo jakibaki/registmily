@@ -1,23 +1,11 @@
-use axum::extract;
 use git2::Repository;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use serde_json::Value;
 use std::fs;
-use std::fs::File;
-
-use std::fs::OpenOptions;
-use std::io::BufRead;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tracing::info;
-
-#[derive(Error, Debug)]
-pub enum PublishError {
-    #[error("error happened while writing file: {0}")]
-    WriteError(std::io::Error),
-}
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublishPackage {
@@ -125,9 +113,23 @@ pub enum Operation {
     DelOwner(String, String),
 }
 
+#[derive(Error, Debug)]
+pub enum PublishError {
+    // #[error("error happened while writing file: {0}")]
+// WriteError(std::io::Error),
+// #[error("test")]
+// Blubb
+}
+
+#[derive(Error, Debug)]
+pub enum YankError {
+    #[error("Crate not found")]
+    CrateNotFoundError,
+}
+
 pub enum RegistryResponse {
     Publish(Result<(), PublishError>),
-    Yank,
+    Yank(Result<(), YankError>),
     AddOwner,
     DelOwner,
 }
@@ -147,8 +149,9 @@ pub fn get_package_git_path(repo_path: &str, package_name: &str) -> PathBuf {
 pub fn get_package_git_folder(repo_path: &str, package_name: &str) -> PathBuf {
     // ensure that there can be no path traversal bugs!
     // proper crate name checking needs to be done elsewhere
-    // if this ever panics in production it just saved you from a bad vuln :p
+    // if this ever panics in production it just saved me from a bad vuln :p
     assert!(!package_name.contains("."));
+    assert!(!package_name.contains("/"));
 
     let package_name = package_name.to_lowercase();
     let mut path = PathBuf::from(repo_path);
@@ -246,14 +249,11 @@ impl Registry {
     }
 
     pub fn publish(&self, pkg: Package, crate_file: &CrateFile) -> Result<(), PublishError> {
-        // pkg gets validated by apiserver, if this ever panics that's a bug
-        //let json_str = serde_json::to_string(&pkg).unwrap();
-
         let mut cratefile_path = PathBuf::from(&self.storage_location);
         cratefile_path.push(&pkg.cksum);
         cratefile_path.set_extension("crate");
 
-        fs::write(cratefile_path, crate_file).map_err(|err| PublishError::WriteError(err))?;
+        fs::write(cratefile_path, crate_file).unwrap();
 
         let repo_path = get_package_git_path(&self.repo_path, &pkg.name);
 
@@ -262,7 +262,6 @@ impl Registry {
         let mut all_published: Vec<Package> = if let Ok(oldfile) = fs::read_to_string(&repo_path) {
             oldfile
                 .lines()
-                .filter(|x| *x != "")
                 .map(|x| serde_json::from_str(x).unwrap())
                 .collect()
         } else {
@@ -270,62 +269,67 @@ impl Registry {
         };
 
         all_published.retain(|x| x.vers != pkg.vers);
-
         all_published.push(pkg);
 
-        let mut outfile = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(&repo_path)
-            .map_err(|err| PublishError::WriteError(err))?;
-
-        for published_package in all_published {
-            outfile
-                .write_fmt(format_args!(
-                    "{}\n",
-                    serde_json::to_string(&published_package).unwrap()
-                ))
-                .map_err(|err| PublishError::WriteError(err))?;
-        }
-        drop(outfile);
+        let published_strings: Vec<String> = all_published
+            .iter()
+            .map(|x| serde_json::to_string(x).unwrap())
+            .collect();
+        fs::write(&repo_path, published_strings.join("\n")).unwrap();
 
         self.commit_git_files(vec![repo_path.as_path()], "added crate");
 
         Ok(())
     }
 
-    pub fn yank(&self, crate_name: String, version: String, yank_val: bool) {
+    pub fn yank(
+        &self,
+        crate_name: String,
+        version: String,
+        yank_val: bool,
+    ) -> Result<(), YankError> {
         let repo_path = get_package_git_path(&self.repo_path, &crate_name);
 
+        let mut found_version = false;
         let mut set_yanked = false;
 
         // TODO: fail gracefully if not exists
-        let infile = File::open(&repo_path).unwrap();
-        let mut outfile = OpenOptions::new().write(true).open(&repo_path).unwrap();
-        for line in std::io::BufReader::new(infile).lines() {
-            let line = line.unwrap();
-            if line == "" {
-                continue;
-            }
-
-            let mut pkg: Package = serde_json::from_str(&line).unwrap();
-            if pkg.vers == version {
-                pkg.yanked = yank_val;
-                set_yanked = true;
-            }
-            outfile
-                .write_fmt(format_args!("{}\n", serde_json::to_string(&pkg).unwrap()))
-                .unwrap();
-        }
-        drop(outfile);
-
-        let message = if yank_val {
-            "yanked crate"
+        let mut all_published: Vec<Package> = if let Ok(oldfile) = fs::read_to_string(&repo_path) {
+            oldfile
+                .lines()
+                .map(|x| serde_json::from_str(x).unwrap())
+                .collect()
         } else {
-            "unyanked crate"
+            return Err(YankError::CrateNotFoundError);
         };
 
-        self.commit_git_files(vec![repo_path.as_path()], message);
+        for pkg in all_published.iter_mut() {
+            if pkg.vers == version {
+                set_yanked = pkg.yanked != yank_val;
+                pkg.yanked = yank_val;
+                found_version = true;
+            }
+        }
+
+        let published_strings: Vec<String> = all_published
+            .iter()
+            .map(|x| serde_json::to_string(x).unwrap())
+            .collect();
+        fs::write(&repo_path, published_strings.join("\n")).unwrap();
+
+        if found_version {
+            if set_yanked {
+                let message = if yank_val {
+                    "yanked crate"
+                } else {
+                    "unyanked crate"
+                };
+                self.commit_git_files(vec![repo_path.as_path()], message);    
+            }
+            Ok(())
+        } else {
+            Err(YankError::CrateNotFoundError)
+        }
     }
 
     pub fn add_owner(&self, crate_name: String, owner: &str) {
@@ -354,7 +358,7 @@ impl Registry {
         path.set_extension("owners");
         let cur_owners = match fs::read_to_string(&path) {
             Ok(owners) => owners,
-            Err(_) => String::from(""),
+            Err(_) => return,
         };
 
         let mut cur_owners: Vec<&str> = cur_owners.split("\n").collect();
@@ -400,8 +404,7 @@ pub fn handler(git_location: &str, storage_location: &str, mut recv: SyncRecieve
                 RegistryResponse::Publish(registry.publish(pkg, &crate_file))
             }
             Operation::Yank(crate_name, version, yank_val) => {
-                registry.yank(crate_name, version, yank_val);
-                RegistryResponse::Yank
+                RegistryResponse::Yank(registry.yank(crate_name, version, yank_val))
             }
         });
     }
