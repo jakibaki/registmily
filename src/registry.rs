@@ -17,8 +17,6 @@ use tracing::info;
 pub enum PublishError {
     #[error("error happened while writing file: {0}")]
     WriteError(std::io::Error),
-    #[error("Invalid json provided")]
-    JsonInvalid,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -247,26 +245,9 @@ impl Registry {
         }
     }
 
-    pub fn publish(&self, pkg: &Package, crate_file: &CrateFile) -> Result<(), PublishError> {
-        // TODO: validate pkg
-
-        // TODO: avoid double publish
-
-        // TODO: validate owner, need auth token
-
-        // TODO: validate package name
-        let repo_path = get_package_git_path(&self.repo_path, &pkg.name);
-
-        fs::create_dir_all(get_package_git_folder(&self.repo_path, &pkg.name)).unwrap();
-
-        let json_str = serde_json::to_string(pkg).map_err(|_| PublishError::JsonInvalid)?;
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(true)
-            .open(&repo_path)
-            .map_err(|err| PublishError::WriteError(err))?;
+    pub fn publish(&self, pkg: Package, crate_file: &CrateFile) -> Result<(), PublishError> {
+        // pkg gets validated by apiserver, if this ever panics that's a bug
+        //let json_str = serde_json::to_string(&pkg).unwrap();
 
         let mut cratefile_path = PathBuf::from(&self.storage_location);
         cratefile_path.push(&pkg.cksum);
@@ -274,10 +255,39 @@ impl Registry {
 
         fs::write(cratefile_path, crate_file).map_err(|err| PublishError::WriteError(err))?;
 
-        file.write_fmt(format_args!("{}\n", json_str))
+        let repo_path = get_package_git_path(&self.repo_path, &pkg.name);
+
+        fs::create_dir_all(get_package_git_folder(&self.repo_path, &pkg.name)).unwrap();
+
+        let mut all_published: Vec<Package> = if let Ok(oldfile) = fs::read_to_string(&repo_path) {
+            oldfile
+                .lines()
+                .filter(|x| *x != "")
+                .map(|x| serde_json::from_str(x).unwrap())
+                .collect()
+        } else {
+            vec![]
+        };
+
+        all_published.retain(|x| x.vers != pkg.vers);
+
+        all_published.push(pkg);
+
+        let mut outfile = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&repo_path)
             .map_err(|err| PublishError::WriteError(err))?;
 
-        drop(file);
+        for published_package in all_published {
+            outfile
+                .write_fmt(format_args!(
+                    "{}\n",
+                    serde_json::to_string(&published_package).unwrap()
+                ))
+                .map_err(|err| PublishError::WriteError(err))?;
+        }
+        drop(outfile);
 
         self.commit_git_files(vec![repo_path.as_path()], "added crate");
 
@@ -387,7 +397,7 @@ pub fn handler(git_location: &str, storage_location: &str, mut recv: SyncRecieve
                 RegistryResponse::DelOwner
             }
             Operation::Publish(pkg, crate_file) => {
-                RegistryResponse::Publish(registry.publish(&pkg, &crate_file))
+                RegistryResponse::Publish(registry.publish(pkg, &crate_file))
             }
             Operation::Yank(crate_name, version, yank_val) => {
                 registry.yank(crate_name, version, yank_val);

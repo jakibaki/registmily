@@ -42,6 +42,7 @@ async fn publish(
     info!("{}", (*data_paths).git_path);
     info!("{}", (*data_paths).storage_path);
 
+    // TODO: validate package name
     // todo: handle bad data
 
     let json_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
@@ -116,12 +117,16 @@ async fn unyank(
 
 async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl IntoResponse {
     let mut file_path = PathBuf::from(&data_paths.storage_path);
+    if hash.len() != 64 || hash.contains(".") || hash.contains("/") {
+        return Err((StatusCode::NOT_FOUND, format!("File not found!")));
+    }
+
     file_path.push(hash);
     file_path.set_extension("crate");
 
     let file = match tokio::fs::File::open(file_path).await {
         Ok(file) => file,
-        Err(err) => return Err((StatusCode::NOT_FOUND, format!("File not found: {}", err))),
+        Err(_) => return Err((StatusCode::NOT_FOUND, format!("File not found!"))),
     };
 
     let stream = ReaderStream::new(file);
@@ -137,17 +142,6 @@ async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl 
 
 fn build_router(sender: registry::SyncSender, git_path: String, storage_path: String) -> Router {
     Router::new()
-        /*.route(
-            "/",
-            get(|sender| async {
-                let res = registry::add(registry::Operation::Add(12, 13), sender).await.unwrap();
-                if let registry::RegistryResponse::Add(resp) = res {
-                    resp
-                } else {
-                    ":c".to_string()
-                }
-            }),
-        )*/
         .route("/api/v1/crates/new", put(publish))
         .route("/api/v1/crates/:crate_name/:version/yank", delete(yank))
         .route("/api/v1/crates/:crate_name/:version/unyank", put(unyank))
