@@ -89,7 +89,7 @@ impl Package {
             deps: pub_pkg
                 .deps
                 .into_iter()
-                .map(|x| PackageDep::from(x))
+                .map(PackageDep::from)
                 .collect(),
             cksum: checksum,
             features: pub_pkg.features,
@@ -124,7 +124,7 @@ pub enum PublishError {
 #[derive(Error, Debug)]
 pub enum YankError {
     #[error("Crate not found")]
-    CrateNotFoundError,
+    CrateNotFound,
 }
 
 pub enum RegistryResponse {
@@ -150,8 +150,8 @@ pub fn get_package_git_folder(repo_path: &str, package_name: &str) -> PathBuf {
     // ensure that there can be no path traversal bugs!
     // proper crate name checking needs to be done elsewhere
     // if this ever panics in production it just saved me from a bad vuln :p
-    assert!(!package_name.contains("."));
-    assert!(!package_name.contains("/"));
+    assert!(!package_name.contains('.'));
+    assert!(!package_name.contains('/'));
 
     let package_name = package_name.to_lowercase();
     let mut path = PathBuf::from(repo_path);
@@ -190,8 +190,8 @@ fn git_credentials_callback(
 }
 
 fn crate_exists(repo_path: &str, crate_name: &str) -> bool {
-    assert!(!crate_name.contains("."));
-    assert!(!crate_name.contains("/"));
+    assert!(!crate_name.contains('.'));
+    assert!(!crate_name.contains('/'));
     let path = get_package_git_path(repo_path, crate_name);
     Path::new(&path).exists()
 }
@@ -211,14 +211,13 @@ impl Registry {
         }
     }
 
-
     pub fn commit_git_files(&self, paths: Vec<&Path>, message: &str) {
         let mut index = self.repo.index().unwrap();
 
         for path in paths {
             let path = pathdiff::diff_paths(path, Path::new(&self.repo_path)).unwrap();
 
-            index.add_path(&path.as_path()).unwrap();
+            index.add_path(path.as_path()).unwrap();
         }
         index.write().unwrap();
         let sig = self.repo.signature().unwrap();
@@ -308,7 +307,7 @@ impl Registry {
                 .map(|x| serde_json::from_str(x).unwrap())
                 .collect()
         } else {
-            return Err(YankError::CrateNotFoundError);
+            return Err(YankError::CrateNotFound);
         };
 
         for pkg in all_published.iter_mut() {
@@ -332,15 +331,16 @@ impl Registry {
                 } else {
                     "unyanked crate"
                 };
-                self.commit_git_files(vec![repo_path.as_path()], message);    
+                self.commit_git_files(vec![repo_path.as_path()], message);
             }
             Ok(())
         } else {
-            Err(YankError::CrateNotFoundError)
+            Err(YankError::CrateNotFound)
         }
     }
 
-    pub fn add_owner(&self, crate_name: String, owner: &str) { // TODO: error type
+    pub fn add_owner(&self, crate_name: String, owner: &str) {
+        // TODO: error type
         if !crate_exists(&self.repo_path, &crate_name) {
             return;
         }
@@ -348,7 +348,7 @@ impl Registry {
         let mut path = get_package_git_path(&self.repo_path, &crate_name);
         path.set_extension("owners");
         let mut cur_owners: Vec<String> = match fs::read_to_string(&path) {
-            Ok(owners) => owners.split("\n").map(|x| String::from(x)).collect(),
+            Ok(owners) => owners.split('\n').map(String::from).collect(),
             Err(_) => vec![],
         };
 
@@ -363,7 +363,8 @@ impl Registry {
         self.commit_git_files(vec![path.as_path()], "added owner to crate");
     }
 
-    pub fn del_owner(&self, crate_name: String, owner: &str) { // TODO: error type
+    pub fn del_owner(&self, crate_name: String, owner: &str) {
+        // TODO: error type
         if !crate_exists(&self.repo_path, &crate_name) {
             return;
         }
@@ -375,7 +376,7 @@ impl Registry {
             Err(_) => return,
         };
 
-        let mut cur_owners: Vec<&str> = cur_owners.split("\n").collect();
+        let mut cur_owners: Vec<&str> = cur_owners.split('\n').collect();
 
         cur_owners.retain(|x| x != &owner);
 

@@ -104,7 +104,7 @@ async fn yank(
     {
         registry::RegistryResponse::Yank(res) => match res {
             Ok(_) => Json(json!({"ok": true})),
-            Err(registry::YankError::CrateNotFoundError) => {
+            Err(registry::YankError::CrateNotFound) => {
                 Json(json!({"errors": [{"detail": "crate not found!"}]}))
             }
         },
@@ -125,7 +125,7 @@ async fn unyank(
     {
         registry::RegistryResponse::Yank(res) => match res {
             Ok(_) => Json(json!({"ok": true})),
-            Err(registry::YankError::CrateNotFoundError) => {
+            Err(registry::YankError::CrateNotFound) => {
                 Json(json!({"errors": [{"detail": "crate not found!"}]}))
             }
         },
@@ -135,8 +135,8 @@ async fn unyank(
 
 async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl IntoResponse {
     let mut file_path = PathBuf::from(&data_paths.storage_path);
-    if hash.len() != 64 || hash.contains(".") || hash.contains("/") {
-        return Err((StatusCode::NOT_FOUND, format!("File not found!")));
+    if hash.len() != 64 || hash.contains('.') || hash.contains('/') {
+        return Err((StatusCode::NOT_FOUND, "File not found!"));
     }
 
     file_path.push(hash);
@@ -144,7 +144,7 @@ async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl 
 
     let file = match tokio::fs::File::open(file_path).await {
         Ok(file) => file,
-        Err(_) => return Err((StatusCode::NOT_FOUND, format!("File not found!"))),
+        Err(_) => return Err((StatusCode::NOT_FOUND, "File not found!")),
     };
 
     let stream = ReaderStream::new(file);

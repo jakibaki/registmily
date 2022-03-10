@@ -2,7 +2,6 @@ mod apiserver;
 mod registry;
 
 use tracing::{info, Level};
-use tracing_subscriber;
 
 #[tokio::main]
 async fn main() {
