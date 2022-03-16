@@ -140,6 +140,26 @@ pub struct Registry {
     storage_location: String,
 }
 
+
+fn git_credentials_callback(
+    _user: &str,
+    user_from_url: Option<&str>,
+    cred: git2::CredentialType,
+) -> Result<git2::Cred, git2::Error> {
+    let user = user_from_url.unwrap_or("git");
+
+    if cred.contains(git2::CredentialType::USERNAME) {
+        return git2::Cred::username(user);
+    }
+
+    let mut ssh_key_path = dirs::home_dir().unwrap();
+    ssh_key_path.push(".ssh");
+    ssh_key_path.push("id_rsa");
+
+    git2::Cred::ssh_key(user, None, &ssh_key_path, None)
+}
+
+
 pub fn get_package_git_path(repo_path: &str, package_name: &str) -> PathBuf {
     let mut folder = get_package_git_folder(repo_path, package_name);
     folder.push(package_name);
@@ -169,24 +189,6 @@ pub fn get_package_git_folder(repo_path: &str, package_name: &str) -> PathBuf {
         }
     }
     path
-}
-
-fn git_credentials_callback(
-    _user: &str,
-    user_from_url: Option<&str>,
-    cred: git2::CredentialType,
-) -> Result<git2::Cred, git2::Error> {
-    let user = user_from_url.unwrap_or("git");
-
-    if cred.contains(git2::CredentialType::USERNAME) {
-        return git2::Cred::username(user);
-    }
-
-    let mut ssh_key_path = dirs::home_dir().unwrap();
-    ssh_key_path.push(".ssh");
-    ssh_key_path.push("id_rsa");
-
-    git2::Cred::ssh_key(user, None, &ssh_key_path, None)
 }
 
 fn crate_exists(repo_path: &str, crate_name: &str) -> bool {

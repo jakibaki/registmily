@@ -160,10 +160,10 @@ async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl 
 
 fn build_router(sender: registry::SyncSender, git_path: String, storage_path: String) -> Router {
     Router::new()
+        .route("/me", get(|| async { "uwu" }))
         .route("/api/v1/crates/new", put(publish))
         .route("/api/v1/crates/:crate_name/:version/yank", delete(yank))
         .route("/api/v1/crates/:crate_name/:version/unyank", put(unyank))
-        .route("/me", get(|| async { "uwu" }))
         .route("/api/v1/dl/:hash", get(dl))
         .layer(axum::extract::Extension(sender))
         .layer(axum::extract::Extension(DataPaths {

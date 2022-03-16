@@ -1,20 +1,32 @@
 mod apiserver;
 mod registry;
-
+mod settings;
 use tracing::{info, Level};
+
+
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
-    let git_path = "testgit";
-    let storage_path = "storage";
+
+    let config = match settings::read() {
+        Ok(config) => config,
+        Err(_) => panic!("could not read config file"),
+    };
+
+    let repo_path = String::from(&config.repo_path);
+    let storage_path = String::from(&config.storage_path);
+    
+
 
     let (sender, recv) = tokio::sync::mpsc::channel(u16::MAX as usize);
-    let jh = std::thread::spawn(move || registry::handler(git_path, storage_path, recv));
+    let jh = std::thread::spawn(move || registry::handler(&config.repo_path, &config.storage_path, recv));
 
     info!("Starting up");
 
-    apiserver::serve(sender, String::from(git_path), String::from(storage_path)).await;
+
+    apiserver::serve(sender, repo_path, storage_path).await;
+
 
     jh.join().unwrap();
 }
