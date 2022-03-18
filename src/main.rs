@@ -11,7 +11,7 @@ async fn main() {
 
     let config = match settings::read() {
         Ok(config) => config,
-        Err(_) => panic!("could not read config file"),
+        Err(_) => panic!("could not read config file, check readme for more instructions"),
     };
 
     let repo_path = String::from(&config.repo_path);
