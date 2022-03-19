@@ -14,8 +14,8 @@ async fn main() {
         Err(_) => panic!("could not read config file, check readme for more instructions"),
     };
 
-    let repo_path = String::from(&config.repo_path);
-    let storage_path = String::from(&config.storage_path);
+    let repo_path = config.repo_path.clone();
+    let storage_path = config.storage_path.clone();
     
 
 

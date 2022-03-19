@@ -133,13 +133,13 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
     {
         let resp = reqwest::get("http://localhost:8080/me").await?;
         assert_eq!(resp.text().await?, "uwu");
-        info!("/me fine");
     }
 
     let crate_file = "owo";
 
-    let mut new_body: Vec<u8> = Vec::new();
     {
+        let mut new_body: Vec<u8> = Vec::new();
+
         let new_json_str = serde_json::to_string(&new_post_json)?;
         let json_len = new_json_str.len() as u32;
         new_body.extend_from_slice(&json_len.to_le_bytes());
@@ -147,9 +147,7 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
         let crate_file_len = crate_file.len() as u32;
         new_body.extend_from_slice(&crate_file_len.to_le_bytes());
         new_body.extend_from_slice(crate_file.as_bytes());
-    };
 
-    {
         let client = reqwest::Client::new();
         // todo: ensure response fine
         client

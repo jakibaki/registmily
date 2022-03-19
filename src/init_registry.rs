@@ -2,7 +2,6 @@ use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use std::path::Path;
 
-use crate::registry::Registry;
 use std::process::Command;
 
 use std::env;
