@@ -15,7 +15,7 @@ struct RegistryIndex {
 
 pub fn setup_registry(git_path: &Path, storage_path: &Path, api_url: &str) {
     let index = RegistryIndex {
-        dl: format!("{}/api/v1/dl/{{sha256-checksum}}", &api_url),
+        dl: format!("{}/api/v1/dl/{{sha256-checksum}}", api_url),
         api: String::from(api_url),
     };
     fs::create_dir_all(git_path).unwrap();

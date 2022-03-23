@@ -3,3 +3,4 @@
 /storage
 /e2e_test_repo
 /e2e_test_storage
+.env
