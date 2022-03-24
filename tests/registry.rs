@@ -2,6 +2,7 @@ use registmily::apiserver;
 use registmily::init_registry;
 use registmily::registry;
 use registmily::settings;
+use registmily::models;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -34,6 +35,17 @@ pub fn test_registry() {
 
 #[sqlx_database_tester::test(pool(variable = "pool"))]
 pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
+    let username = "emily";
+    let mut trans = pool.begin().await?;
+
+    models::User::new(&mut trans, username).await?;
+
+
+
+    let session = models::UserSession::new(&mut trans, username).await?;
+
+    trans.commit().await?;
+
     let new_post_json = json!({
         "name": "foo",
         "vers": "0.1.0",
@@ -156,6 +168,7 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
         // todo: ensure response fine
         client
             .put("http://localhost:8080/api/v1/crates/new")
+            .header("authorization", &session.token)
             .body(new_body)
             .send()
             .await?;
@@ -176,6 +189,7 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
         let client = reqwest::Client::new();
         client
             .delete("http://localhost:8080/api/v1/crates/foo/0.1.0/yank")
+            .header("authorization", &session.token)
             .send()
             .await?;
         expected_index_json["yanked"] = serde_json::Value::Bool(true);
@@ -188,6 +202,7 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
         let client = reqwest::Client::new();
         client
             .put("http://localhost:8080/api/v1/crates/foo/0.1.0/unyank")
+            .header("authorization", &session.token)
             .send()
             .await?;
         expected_index_json["yanked"] = serde_json::Value::Bool(false);
