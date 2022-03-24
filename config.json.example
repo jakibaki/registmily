@@ -1,0 +1,6 @@
+{
+    "repo_path": "testgit",
+    "storage_path": "storage",
+    "database_url": "postgres://postgres:super_duper_secure_password@localhost/registmily",
+    "database_connections": 5
+}

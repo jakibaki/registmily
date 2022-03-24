@@ -2,6 +2,7 @@ use registmily::apiserver;
 use registmily::init_registry;
 use registmily::registry;
 use registmily::settings;
+use registmily::models;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -32,8 +33,19 @@ pub fn test_registry() {
     );
 }
 
-#[tokio::test]
+#[sqlx_database_tester::test(pool(variable = "pool"))]
 pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
+    let username = "emily";
+    let mut trans = pool.begin().await?;
+
+    models::User::new(&mut trans, username).await?;
+
+
+
+    let session = models::UserSession::new(&mut trans, username).await?;
+
+    trans.commit().await?;
+
     let new_post_json = json!({
         "name": "foo",
         "vers": "0.1.0",
@@ -115,17 +127,21 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
     let config = settings::Settings {
         repo_path: String::from("e2e_test_repo"),
         storage_path: String::from("e2e_test_storage"),
+        database_url: String::from(""),
+        database_connections: 0
     };
 
-    let repo_path = String::from(&config.repo_path);
-    let storage_path = String::from(&config.storage_path);
 
+    let config_repo_path = config.repo_path.clone();
+    let config_storage_path = config.storage_path.clone();
+    
     let (sender, recv) = tokio::sync::mpsc::channel(u16::MAX as usize);
-    std::thread::spawn(move || registry::handler(&config.repo_path, &config.storage_path, recv));
+    std::thread::spawn(move || registry::handler(&config_repo_path, &config_storage_path, recv));
 
     info!("Registry handler spawned");
 
-    task::spawn(apiserver::serve(sender, repo_path, storage_path));
+
+    task::spawn(apiserver::serve(sender, config, pool));
     task::yield_now().await;
 
     info!("Apiserver spawned");
@@ -152,6 +168,7 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
         // todo: ensure response fine
         client
             .put("http://localhost:8080/api/v1/crates/new")
+            .header("authorization", &session.token)
             .body(new_body)
             .send()
             .await?;
@@ -172,6 +189,7 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
         let client = reqwest::Client::new();
         client
             .delete("http://localhost:8080/api/v1/crates/foo/0.1.0/yank")
+            .header("authorization", &session.token)
             .send()
             .await?;
         expected_index_json["yanked"] = serde_json::Value::Bool(true);
@@ -184,6 +202,7 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
         let client = reqwest::Client::new();
         client
             .put("http://localhost:8080/api/v1/crates/foo/0.1.0/unyank")
+            .header("authorization", &session.token)
             .send()
             .await?;
         expected_index_json["yanked"] = serde_json::Value::Bool(false);

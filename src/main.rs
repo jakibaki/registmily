@@ -1,12 +1,14 @@
 mod apiserver;
 mod registry;
 mod settings;
+mod models;
+use sqlx::postgres::PgPoolOptions;
 use tracing::{info, Level};
 
 
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), apiserver::ApiServerError> {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
     let config = match settings::read() {
@@ -20,13 +22,26 @@ async fn main() {
 
 
     let (sender, recv) = tokio::sync::mpsc::channel(u16::MAX as usize);
-    let jh = std::thread::spawn(move || registry::handler(&config.repo_path, &config.storage_path, recv));
+    let jh = std::thread::spawn(move || registry::handler(&repo_path, &storage_path, recv));
 
     info!("Starting up");
 
+    info!("Connecting to DB");
 
-    apiserver::serve(sender, repo_path, storage_path).await;
+    let pool = PgPoolOptions::new()
+        .max_connections(config.database_connections)
+        .connect(&config.database_url)
+        .await?;
+    
+    info!("Running migrations");
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    info!("Database setup done, starting api server");
+
+    apiserver::serve(sender, config, pool).await?;
 
 
     jh.join().unwrap();
+
+    Ok(())
 }
