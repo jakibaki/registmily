@@ -112,7 +112,6 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
         "http://localhost:8080",
     );
 
-    // TODO: spin up test db
     let config = settings::Settings {
         repo_path: String::from("e2e_test_repo"),
         storage_path: String::from("e2e_test_storage"),
