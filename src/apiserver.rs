@@ -187,18 +187,7 @@ pub enum ApiServerError {
 
 
 
-pub async fn serve(sender: registry::SyncSender, settings: settings::Settings) -> Result<(), ApiServerError> {
-    info!("Connecting to DB");
-
-    let pool = PgPoolOptions::new()
-        .max_connections(settings.database_connections)
-        .connect(&settings.database_url)
-        .await?;
-    
-    info!("Running migrations");
-    sqlx::migrate!("./migrations").run(&pool).await?;
-
-    info!("Database setup done, starting api server");
+pub async fn serve(sender: registry::SyncSender, settings: settings::Settings, pool: sqlx::Pool<sqlx::Postgres>) -> Result<(), ApiServerError> {
 
     axum::Server::bind(&"0.0.0.0:8080".parse().unwrap())
         .serve(build_router(sender, settings.repo_path.clone(), settings.storage_path.clone(), pool).into_make_service())

@@ -2,6 +2,7 @@ mod apiserver;
 mod registry;
 mod settings;
 mod models;
+use sqlx::postgres::PgPoolOptions;
 use tracing::{info, Level};
 
 
@@ -25,8 +26,19 @@ async fn main() -> Result<(), apiserver::ApiServerError> {
 
     info!("Starting up");
 
+    info!("Connecting to DB");
 
-    apiserver::serve(sender, config).await?;
+    let pool = PgPoolOptions::new()
+        .max_connections(config.database_connections)
+        .connect(&config.database_url)
+        .await?;
+    
+    info!("Running migrations");
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    info!("Database setup done, starting api server");
+
+    apiserver::serve(sender, config, pool).await?;
 
 
     jh.join().unwrap();

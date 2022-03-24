@@ -32,7 +32,7 @@ pub fn test_registry() {
     );
 }
 
-#[tokio::test]
+#[sqlx_database_tester::test(pool(variable = "pool"))]
 pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
     let new_post_json = json!({
         "name": "foo",
@@ -129,7 +129,8 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Registry handler spawned");
 
-    task::spawn(apiserver::serve(sender, config));
+
+    task::spawn(apiserver::serve(sender, config, pool));
     task::yield_now().await;
 
     info!("Apiserver spawned");
