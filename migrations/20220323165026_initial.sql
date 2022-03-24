@@ -1,8 +1,18 @@
 CREATE TABLE users(
-    ident TEXT PRIMARY KEY,
-    token TEXT NOT NULL
+    ident TEXT PRIMARY KEY
 );
 
+CREATE TABLE user_sessions(
+    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    ident TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+
+    CONSTRAINT fk_user_ident
+		FOREIGN KEY(ident)
+			REFERENCES users(ident)
+				ON UPDATE CASCADE
+					ON DELETE CASCADE
+);
 
 CREATE TABLE crates(
     name TEXT PRIMARY KEY

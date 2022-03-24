@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use sqlx::{postgres::PgPoolOptions, PgPool};
+
 use axum::{
     body::{Bytes, StreamBody},
     extract::{ContentLengthLimit, Extension, Path},
@@ -10,7 +12,7 @@ use axum::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::registry;
+use crate::{registry, settings};
 use serde_json::{json, Value};
 use tracing::info;
 
@@ -158,7 +160,7 @@ async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl 
     Ok((headers, body))
 }
 
-fn build_router(sender: registry::SyncSender, git_path: String, storage_path: String) -> Router {
+fn build_router(sender: registry::SyncSender, git_path: String, storage_path: String, pool: PgPool) -> Router {
     Router::new()
         .route("/me", get(|| async { "uwu" }))
         .route("/api/v1/crates/new", put(publish))
@@ -170,11 +172,37 @@ fn build_router(sender: registry::SyncSender, git_path: String, storage_path: St
             git_path,
             storage_path,
         }))
+        .layer(axum::extract::Extension(pool))
 }
 
-pub async fn serve(sender: registry::SyncSender, git_path: String, storage_path: String) {
+#[derive(Debug, thiserror::Error)]
+pub enum ApiServerError {
+    #[error("Sqlx error: {0}")]
+	Sqlx(#[from] sqlx::Error),
+	#[error("Failed to run database migrations: {0}")]
+	SqlxMigration(#[from] sqlx::migrate::MigrateError),
+    #[error("Hyper error: {0}")]
+	Hyper(#[from] hyper::Error),
+}
+
+
+
+pub async fn serve(sender: registry::SyncSender, settings: settings::Settings) -> Result<(), ApiServerError> {
+    info!("Connecting to DB");
+
+    let pool = PgPoolOptions::new()
+        .max_connections(settings.database_connections)
+        .connect(&settings.database_url)
+        .await?;
+    
+    info!("Running migrations");
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    info!("Database setup done, starting api server");
+
     axum::Server::bind(&"0.0.0.0:8080".parse().unwrap())
-        .serve(build_router(sender, git_path, storage_path).into_make_service())
-        .await
-        .unwrap();
+        .serve(build_router(sender, settings.repo_path.clone(), settings.storage_path.clone(), pool).into_make_service())
+        .await?;
+
+    Ok(())
 }

@@ -109,8 +109,6 @@ pub type SyncReciever =
 pub enum Operation {
     Publish(Package, CrateFile),
     Yank(String, String, bool),
-    AddOwner(String, String),
-    DelOwner(String, String),
 }
 
 #[derive(Error, Debug)]
@@ -130,8 +128,6 @@ pub enum YankError {
 pub enum RegistryResponse {
     Publish(Result<(), PublishError>),
     Yank(Result<(), YankError>),
-    AddOwner,
-    DelOwner,
 }
 
 pub struct Registry {
@@ -340,54 +336,6 @@ impl Registry {
             Err(YankError::CrateNotFound)
         }
     }
-
-    pub fn add_owner(&self, crate_name: String, owner: &str) {
-        // TODO: error type
-        if !crate_exists(&self.repo_path, &crate_name) {
-            return;
-        }
-
-        let mut path = get_package_git_path(&self.repo_path, &crate_name);
-        path.set_extension("owners");
-        let mut cur_owners: Vec<String> = match fs::read_to_string(&path) {
-            Ok(owners) => owners.split('\n').map(String::from).collect(),
-            Err(_) => vec![],
-        };
-
-        if !cur_owners.contains(&String::from(owner)) {
-            cur_owners.push(String::from(owner));
-        }
-
-        let cur_owners = cur_owners.join("\n");
-
-        fs::write(&path, cur_owners).unwrap();
-
-        self.commit_git_files(vec![path.as_path()], "added owner to crate");
-    }
-
-    pub fn del_owner(&self, crate_name: String, owner: &str) {
-        // TODO: error type
-        if !crate_exists(&self.repo_path, &crate_name) {
-            return;
-        }
-
-        let mut path = get_package_git_path(&self.repo_path, &crate_name);
-        path.set_extension("owners");
-        let cur_owners = match fs::read_to_string(&path) {
-            Ok(owners) => owners,
-            Err(_) => return,
-        };
-
-        let mut cur_owners: Vec<&str> = cur_owners.split('\n').collect();
-
-        cur_owners.retain(|x| x != &owner);
-
-        let cur_owners = cur_owners.join("\n");
-
-        fs::write(&path, cur_owners).unwrap();
-
-        self.commit_git_files(vec![path.as_path()], "deleted owner from crate");
-    }
 }
 
 pub async fn run_task(
@@ -409,14 +357,6 @@ pub fn handler(git_location: &str, storage_location: &str, mut recv: SyncRecieve
 
     while let Some((op, oneshot_sender)) = recv.blocking_recv() {
         let _ = oneshot_sender.send(match op {
-            Operation::AddOwner(crate_name, owner) => {
-                registry.add_owner(crate_name, &owner);
-                RegistryResponse::AddOwner
-            }
-            Operation::DelOwner(crate_name, owner) => {
-                registry.del_owner(crate_name, &owner);
-                RegistryResponse::DelOwner
-            }
             Operation::Publish(pkg, crate_file) => {
                 RegistryResponse::Publish(registry.publish(pkg, &crate_file))
             }

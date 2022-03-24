@@ -112,20 +112,24 @@ pub async fn e2e_tests() -> Result<(), Box<dyn std::error::Error>> {
         "http://localhost:8080",
     );
 
+    // TODO: spin up test db
     let config = settings::Settings {
         repo_path: String::from("e2e_test_repo"),
         storage_path: String::from("e2e_test_storage"),
+        database_url: String::from(""),
+        database_connections: 0
     };
 
-    let repo_path = String::from(&config.repo_path);
-    let storage_path = String::from(&config.storage_path);
 
+    let config_repo_path = config.repo_path.clone();
+    let config_storage_path = config.storage_path.clone();
+    
     let (sender, recv) = tokio::sync::mpsc::channel(u16::MAX as usize);
-    std::thread::spawn(move || registry::handler(&config.repo_path, &config.storage_path, recv));
+    std::thread::spawn(move || registry::handler(&config_repo_path, &config_storage_path, recv));
 
     info!("Registry handler spawned");
 
-    task::spawn(apiserver::serve(sender, repo_path, storage_path));
+    task::spawn(apiserver::serve(sender, config));
     task::yield_now().await;
 
     info!("Apiserver spawned");

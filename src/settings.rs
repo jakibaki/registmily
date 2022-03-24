@@ -6,6 +6,8 @@ use config::Config;
 pub struct Settings {
     pub repo_path: String,
     pub storage_path: String,
+    pub database_url: String,
+    pub database_connections: u32
 }
 
 pub fn read() -> Result<Settings, config::ConfigError> {
