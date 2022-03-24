@@ -181,4 +181,12 @@ impl CrateOwner {
         .await?
         .into())
     }
+
+    pub async fn all_owners(transaction: &mut PgTransaction<'_>, crate_name: &str) -> DbResult<Vec<Self>> {
+        sqlx::query_as!(
+            Self, 
+            "SELECT crate_name, user_ident FROM crate_owners WHERE crate_name = $1", 
+            crate_name)
+            .fetch_all(transaction).await
+    }
 }
