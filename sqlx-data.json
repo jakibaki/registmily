@@ -1,0 +1,245 @@
+{
+  "db": "PostgreSQL",
+  "0b1c20f70150672696e6aec2df2353b3d9b214de23522d8f4ad8cc542e8a82ba": {
+    "describe": {
+      "columns": [
+        {
+          "name": "ident",
+          "ordinal": 0,
+          "type_info": "Text"
+        },
+        {
+          "name": "token",
+          "ordinal": 1,
+          "type_info": "Text"
+        }
+      ],
+      "nullable": [
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "SELECT ident, token FROM user_sessions WHERE token = $1"
+  },
+  "0b3ec35409b01c2813ad122a2fc72d3cc95039770aa8a4fd939214e10a40f72f": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "DELETE FROM user_sessions WHERE token = $1"
+  },
+  "0e3ab5cbec93db6287f7784797855f4f75986625c38642428b03ac477fecfabd": {
+    "describe": {
+      "columns": [
+        {
+          "name": "ident",
+          "ordinal": 0,
+          "type_info": "Text"
+        },
+        {
+          "name": "token",
+          "ordinal": 1,
+          "type_info": "Text"
+        }
+      ],
+      "nullable": [
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Text",
+          "Text"
+        ]
+      }
+    },
+    "query": "INSERT INTO user_sessions (ident, token) VALUES ($1, $2) RETURNING ident, token"
+  },
+  "17dec14136566a75e311d1bb7b492e6ebae2fd479f8fe804fe022e6bb7fcfb83": {
+    "describe": {
+      "columns": [
+        {
+          "name": "exists",
+          "ordinal": 0,
+          "type_info": "Bool"
+        }
+      ],
+      "nullable": [
+        null
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "SELECT EXISTS(SELECT 1 FROM crates WHERE name = $1)"
+  },
+  "219ebb10f7c7b3914ecbcfae21ffc18dc08d6f9cccd2d2c72ba006c202b04220": {
+    "describe": {
+      "columns": [
+        {
+          "name": "exists",
+          "ordinal": 0,
+          "type_info": "Bool"
+        }
+      ],
+      "nullable": [
+        null
+      ],
+      "parameters": {
+        "Left": [
+          "Text",
+          "Text"
+        ]
+      }
+    },
+    "query": "SELECT EXISTS(SELECT 1 FROM crate_owners WHERE crate_name = $1 AND user_ident = $2)"
+  },
+  "41de9464bd1cd480854cbdb6ab9600f90a25b130d122c6ab2f5a33ac4aa742d6": {
+    "describe": {
+      "columns": [
+        {
+          "name": "name",
+          "ordinal": 0,
+          "type_info": "Text"
+        }
+      ],
+      "nullable": [
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "INSERT INTO crates (name) VALUES ($1) RETURNING name"
+  },
+  "47c464f643dfe2ef088631a06c03201a3fd73d2b497ece37416c4278426d3012": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "DELETE FROM user_sessions WHERE ident = $1"
+  },
+  "5c0eadd5b79b9c2c4336a336989e068e010127c16dbd8d80e9b97f111631ef2a": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Text",
+          "Text"
+        ]
+      }
+    },
+    "query": "DELETE FROM crate_owners WHERE crate_name = $1 AND user_ident = $2"
+  },
+  "6284ef235dbf8e42a5ca454776b350a4d8579d9c5fa0b3708f96a634da2d1a23": {
+    "describe": {
+      "columns": [
+        {
+          "name": "crate_name",
+          "ordinal": 0,
+          "type_info": "Text"
+        },
+        {
+          "name": "user_ident",
+          "ordinal": 1,
+          "type_info": "Text"
+        }
+      ],
+      "nullable": [
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Text",
+          "Text"
+        ]
+      }
+    },
+    "query": "INSERT INTO crate_owners (crate_name, user_ident) VALUES ($1, $2) RETURNING crate_name, user_ident"
+  },
+  "730ae8deda47a4e092ff46dc5de88247833379e8e1187ac770cb1a110ff3cdc2": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "DELETE FROM users WHERE ident = $1"
+  },
+  "97ab72e0f3e4a5d39531182cc4d3828c05f9621e104c6f221ee7f66ca61745cc": {
+    "describe": {
+      "columns": [
+        {
+          "name": "ident",
+          "ordinal": 0,
+          "type_info": "Text"
+        }
+      ],
+      "nullable": [
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "INSERT INTO users (ident) VALUES ($1) RETURNING ident"
+  },
+  "aee1b06852e9a8d53b407788a4ad872997e06097cf99fa291a81c1bd26ad3d89": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "DELETE FROM crates WHERE name = $1"
+  },
+  "cf94292e3adcfd9a14b2abc28eac0b472dd35497f16eff293f8faa978f8ba085": {
+    "describe": {
+      "columns": [
+        {
+          "name": "exists",
+          "ordinal": 0,
+          "type_info": "Bool"
+        }
+      ],
+      "nullable": [
+        null
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "SELECT EXISTS(SELECT 1 FROM users WHERE ident = $1)"
+  }
+}
