@@ -33,5 +33,7 @@ CREATE TABLE crate_owners(
 		FOREIGN KEY(crate_name)
 			REFERENCES crates(name)
 				ON UPDATE CASCADE
-					ON DELETE CASCADE
+					ON DELETE CASCADE,
+
+	UNIQUE (crate_name, user_ident)
 );
