@@ -1,4 +1,10 @@
 # Registmily, a cargo crate registry.
 
 This is heavily work in progress!  
-As it stands it could potentially be useful for a private registry behind a firewall but not much more yet. 
+
+To do:
+
+- [x] Basic cargo registry functionality
+- [x] Session and ownership management using postgres + sqlx
+- [ ] OpenID Connect support for login
+- [ ] System for pulling crates from crates.io and reviewing diffs
