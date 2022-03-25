@@ -3,3 +3,4 @@ pub mod init_registry;
 pub mod settings;
 pub mod apiserver;
 pub mod models;
+pub mod apiresponse;
