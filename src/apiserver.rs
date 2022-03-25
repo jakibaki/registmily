@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::models;
+use crate::models::{self, User};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 
 use axum::{
@@ -13,7 +13,7 @@ use axum::{
     Router,
 };
 use sha2::{Digest, Sha256};
-use tracing_subscriber::registry::SpanData;
+use tracing_subscriber::{fmt::MakeWriter, registry::SpanData};
 
 use crate::{apiresponse::ApiError, registry, settings};
 use serde_json::{json, Value};
@@ -85,9 +85,7 @@ async fn publish(
     info!("{}", (*data_paths).git_path);
     info!("{}", (*data_paths).storage_path);
 
-    let mut trans = pool.begin().await.unwrap();
-
-    // TODO: handle errors differently, so much clutter
+    let mut trans = pool.begin().await?;
 
     // TODO: validate package name
     // todo: handle bad data
@@ -155,7 +153,7 @@ async fn publish(
     .await
     .unwrap()
     {
-        registry::RegistryResponse::Publish(res) => res.unwrap(), 
+        registry::RegistryResponse::Publish(res) => res.unwrap(),
         _ => unreachable!("o no"),
     };
 
@@ -178,14 +176,18 @@ async fn yank(
         {
             registry::RegistryResponse::Yank(res) => match res {
                 Ok(_) => Ok(Json(json!({"ok": true}))),
-                Err(registry::YankError::CrateNotFound) => {
-                    Err(ApiError(String::from("crate should exist but doesnt?"), StatusCode::OK))
-                }
+                Err(registry::YankError::CrateNotFound) => Err(ApiError(
+                    String::from("crate should exist but doesnt?"),
+                    StatusCode::OK,
+                )),
             },
             _ => unreachable!("o no"),
         }
     } else {
-        Err(ApiError(String::from("crate does not exist!"), StatusCode::OK))
+        Err(ApiError(
+            String::from("crate does not exist!"),
+            StatusCode::OK,
+        ))
     }
 }
 
@@ -197,21 +199,147 @@ async fn unyank(
 ) -> Result<Json<Value>, ApiError> {
     let mut trans = pool.begin().await?;
     if models::CrateOwner::exists(&mut trans, &crate_name, &session.ident).await? {
-        match registry::run_task(registry::Operation::Yank(crate_name, version, false), sender)
-            .await
-            .unwrap()
+        match registry::run_task(
+            registry::Operation::Yank(crate_name, version, false),
+            sender,
+        )
+        .await
+        .unwrap()
         {
             registry::RegistryResponse::Yank(res) => match res {
                 Ok(_) => Ok(Json(json!({"ok": true}))),
-                Err(registry::YankError::CrateNotFound) => {
-                    Err(ApiError(String::from("crate should exist but doesnt?"), StatusCode::OK))
-                }
+                Err(registry::YankError::CrateNotFound) => Err(ApiError(
+                    String::from("crate should exist but doesnt?"),
+                    StatusCode::OK,
+                )),
             },
             _ => unreachable!("o no"),
         }
     } else {
-        Err(ApiError(String::from("crate does not exist!"), StatusCode::OK))
+        Err(ApiError(
+            String::from("crate does not exist!"),
+            StatusCode::OK,
+        ))
     }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OwnersJson {
+    pub users: Vec<UserJson>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserJson {
+    pub id: u32,
+    pub login: String,
+    pub name: Option<String>,
+}
+
+async fn owners(
+    Path(crate_name): Path<String>,
+    pool: Extension<PgPool>,
+    _session: models::UserSession,
+) -> Result<Json<OwnersJson>, ApiError> {
+    let mut trans = pool.begin().await?;
+    let owners = models::CrateOwner::all_owners(&mut trans, &crate_name).await?;
+    let owners_json = OwnersJson {
+        users: owners
+            .iter()
+            .enumerate()
+            .map(|(i, x)| UserJson {
+                id: i as u32,
+                login: x.user_ident.clone(),
+                name: None,
+            })
+            .collect(),
+    };
+
+    Ok(Json(owners_json))
+}
+
+#[derive(Deserialize)]
+pub struct OwnerList {
+    users: Vec<String>,
+}
+
+async fn add_owners(
+    Path(crate_name): Path<String>,
+    pool: Extension<PgPool>,
+    session: models::UserSession,
+    axum::extract::Json(to_add): axum::extract::Json<OwnerList>,
+) -> Result<Json<Value>, ApiError> {
+    let mut trans = pool.begin().await?;
+    if !models::CrateOwner::exists(&mut trans, &crate_name, &session.ident).await? {
+        return Err(ApiError(
+            String::from("You do not own this crate"),
+            StatusCode::OK,
+        ));
+    }
+
+    if to_add.users.len() > 255 {
+        return Err(ApiError(
+            String::from("You can only add up to 255 owners at once"),
+            StatusCode::OK,
+        ));
+    }
+
+    for owner in to_add.users {
+        if !models::User::exists_by_ident(&mut trans, &owner).await? {
+            return Err(ApiError(
+                format!("The user {} does not exist", owner),
+                StatusCode::OK,
+            ));
+        }
+
+        if !models::CrateOwner::exists(&mut trans, &crate_name, &owner).await? {
+            models::CrateOwner::new(&mut trans, &crate_name, &owner).await?;
+        }
+    }
+    trans.commit().await?;
+
+    Ok(Json(
+        json!({"ok": true, "msg": "added owners successfully"}),
+    ))
+}
+
+async fn remove_owners(
+    Path(crate_name): Path<String>,
+    pool: Extension<PgPool>,
+    session: models::UserSession,
+    axum::extract::Json(to_add): axum::extract::Json<OwnerList>,
+) -> Result<Json<Value>, ApiError> {
+    let mut trans = pool.begin().await?;
+    if !models::CrateOwner::exists(&mut trans, &crate_name, &session.ident).await? {
+        return Err(ApiError(
+            String::from("You do not own this crate"),
+            StatusCode::OK,
+        ));
+    }
+
+    if to_add.users.len() > 255 {
+        return Err(ApiError(
+            String::from("You can only delete up to 255 owners at once"),
+            StatusCode::OK,
+        ));
+    }
+
+    for owner in to_add.users {
+        if !models::User::exists_by_ident(&mut trans, &owner).await? {
+            return Err(ApiError(
+                format!("The user {} does not exist", owner),
+                StatusCode::OK,
+            ));
+        }
+
+        if models::CrateOwner::exists(&mut trans, &crate_name, &owner).await? {
+            models::CrateOwner::delete(&mut trans, &crate_name, &owner).await?;
+        }
+    }
+    trans.commit().await?;
+
+    Ok(Json(
+        json!({"ok": true, "msg": "deleted owners successfully"}),
+    ))
 }
 
 async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl IntoResponse {
@@ -251,6 +379,10 @@ fn build_router(
         .route("/api/v1/crates/:crate_name/:version/yank", delete(yank))
         .route("/api/v1/crates/:crate_name/:version/unyank", put(unyank))
         .route("/api/v1/dl/:hash", get(dl))
+        .route(
+            "/api/v1/crates/:crate_name/owners",
+            get(owners).put(add_owners).delete(remove_owners),
+        )
         .layer(axum::extract::Extension(sender))
         .layer(axum::extract::Extension(DataPaths {
             git_path,
