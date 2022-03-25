@@ -306,7 +306,7 @@ async fn remove_owners(
     Path(crate_name): Path<String>,
     pool: Extension<PgPool>,
     session: models::UserSession,
-    axum::extract::Json(to_add): axum::extract::Json<OwnerList>,
+    axum::extract::Json(to_delete): axum::extract::Json<OwnerList>,
 ) -> Result<Json<Value>, ApiError> {
     let mut trans = pool.begin().await?;
     if !models::CrateOwner::exists(&mut trans, &crate_name, &session.ident).await? {
@@ -316,14 +316,14 @@ async fn remove_owners(
         ));
     }
 
-    if to_add.users.len() > 255 {
+    if to_delete.users.len() > 255 {
         return Err(ApiError(
             String::from("You can only delete up to 255 owners at once"),
             StatusCode::OK,
         ));
     }
 
-    for owner in to_add.users {
+    for owner in to_delete.users {
         if !models::User::exists_by_ident(&mut trans, &owner).await? {
             return Err(ApiError(
                 format!("The user {} does not exist", owner),
