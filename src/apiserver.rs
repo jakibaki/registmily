@@ -15,7 +15,7 @@ use axum::{
 use sha2::{Digest, Sha256};
 use tracing_subscriber::registry::SpanData;
 
-use crate::{registry, settings};
+use crate::{apiresponse::ApiError, registry, settings};
 use serde_json::{json, Value};
 use tracing::info;
 
@@ -81,11 +81,9 @@ async fn publish(
     data_paths: Extension<DataPaths>,
     pool: Extension<PgPool>,
     session: models::UserSession,
-) -> Json<Value> {
+) -> Result<Json<Value>, ApiError> {
     info!("{}", (*data_paths).git_path);
     info!("{}", (*data_paths).storage_path);
-
-    let invalid_publish_err = Json(json!({"errors": [{"detail": "publish request corrupted"}]}));
 
     let mut trans = pool.begin().await.unwrap();
 
@@ -95,18 +93,24 @@ async fn publish(
     // todo: handle bad data
 
     if bytes.len() < 8 {
-        return invalid_publish_err;
+        return Err(ApiError(
+            String::from("Invalid publish request"),
+            StatusCode::OK,
+        ));
     }
 
     let json_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
     if json_len as usize > bytes.len() - 8 {
-        return invalid_publish_err;
+        return Err(ApiError(
+            String::from("Invalid publish request"),
+            StatusCode::OK,
+        ));
     }
 
     let crate_json: registry::PublishPackage =
         match serde_json::from_slice(&bytes[4..4 + json_len as usize]) {
             Ok(crate_json) => crate_json,
-            Err(_) => return Json(json!({"errors": [{"detail": "invalid crate json"}]})),
+            Err(_) => return Err(ApiError(String::from("Invalid crate json"), StatusCode::OK)),
         };
 
     let crate_len = u32::from_le_bytes(
@@ -116,7 +120,10 @@ async fn publish(
     );
 
     if json_len as usize + crate_len as usize + 8 < bytes.len() {
-        return invalid_publish_err;
+        return Err(ApiError(
+            String::from("Invalid publish request"),
+            StatusCode::OK,
+        ));
     }
 
     let crate_data: Vec<u8> =
@@ -127,28 +134,19 @@ async fn publish(
     let hash = hash.finalize();
     let hash = hex::encode(hash);
 
-    if let Ok(exists) = models::Crate::exists_by_ident(&mut trans, &crate_json.name).await {
-        if exists {
-            if let Ok(owned) =
-                models::CrateOwner::exists(&mut trans, &crate_json.name, &session.ident).await
-            {
-                if !owned {
-                    return Json(json!({"errors": [{"detail": "user is not a crate owner"}]}));
-                }
-            } else {
-                return Json(json!({"errors": [{"detail": "database error"}]}));
-            }
-        } else {
-            models::Crate::new(&mut trans, &crate_json.name)
-                .await
-                .unwrap();
-            models::CrateOwner::new(&mut trans, &crate_json.name, &session.ident)
-                .await
-                .unwrap();
+    if models::Crate::exists_by_ident(&mut trans, &crate_json.name).await? {
+        if !models::CrateOwner::exists(&mut trans, &crate_json.name, &session.ident).await? {
+            return Err(ApiError(
+                String::from("User is not a crate owner"),
+                StatusCode::OK,
+            ));
         }
     } else {
-        return Json(json!({"errors": [{"detail": "database error"}]}));
+        models::Crate::new(&mut trans, &crate_json.name).await?;
+        models::CrateOwner::new(&mut trans, &crate_json.name, &session.ident).await?;
     }
+
+    trans.commit().await?;
 
     match registry::run_task(
         registry::Operation::Publish(registry::Package::from_pub(crate_json, hash), crate_data),
@@ -157,12 +155,13 @@ async fn publish(
     .await
     .unwrap()
     {
-        registry::RegistryResponse::Publish(res) => res.unwrap(),
+        registry::RegistryResponse::Publish(res) => res.unwrap(), 
         _ => unreachable!("o no"),
     };
 
-    trans.commit().await.unwrap();
-    Json(json!({ "warnings": {"invalid_categories": [], "invalid_badges": [],"other": []} }))
+    Ok(Json(
+        json!({ "warnings": {"invalid_categories": [], "invalid_badges": [],"other": []} }),
+    ))
 }
 
 async fn yank(
@@ -170,23 +169,23 @@ async fn yank(
     sender: Extension<registry::SyncSender>,
     pool: Extension<PgPool>,
     session: models::UserSession,
-) -> Json<Value> {
-    let mut trans = pool.begin().await.unwrap();
-    if let Ok(true) = models::CrateOwner::exists(&mut trans, &crate_name, &session.ident).await {
+) -> Result<Json<Value>, ApiError> {
+    let mut trans = pool.begin().await?;
+    if models::CrateOwner::exists(&mut trans, &crate_name, &session.ident).await? {
         match registry::run_task(registry::Operation::Yank(crate_name, version, true), sender)
             .await
             .unwrap()
         {
             registry::RegistryResponse::Yank(res) => match res {
-                Ok(_) => Json(json!({"ok": true})),
+                Ok(_) => Ok(Json(json!({"ok": true}))),
                 Err(registry::YankError::CrateNotFound) => {
-                    Json(json!({"errors": [{"detail": "crate not found!"}]}))
+                    Err(ApiError(String::from("crate should exist but doesnt?"), StatusCode::OK))
                 }
             },
             _ => unreachable!("o no"),
         }
     } else {
-        Json(json!({"errors": [{"detail": "You do not own this!"}]}))
+        Err(ApiError(String::from("crate does not exist!"), StatusCode::OK))
     }
 }
 
@@ -195,23 +194,23 @@ async fn unyank(
     sender: Extension<registry::SyncSender>,
     pool: Extension<PgPool>,
     session: models::UserSession,
-) -> Json<Value> {
-    let mut trans = pool.begin().await.unwrap();
-    if let Ok(true) = models::CrateOwner::exists(&mut trans, &crate_name, &session.ident).await {
+) -> Result<Json<Value>, ApiError> {
+    let mut trans = pool.begin().await?;
+    if models::CrateOwner::exists(&mut trans, &crate_name, &session.ident).await? {
         match registry::run_task(registry::Operation::Yank(crate_name, version, false), sender)
             .await
             .unwrap()
         {
             registry::RegistryResponse::Yank(res) => match res {
-                Ok(_) => Json(json!({"ok": true})),
+                Ok(_) => Ok(Json(json!({"ok": true}))),
                 Err(registry::YankError::CrateNotFound) => {
-                    Json(json!({"errors": [{"detail": "crate not found!"}]}))
+                    Err(ApiError(String::from("crate should exist but doesnt?"), StatusCode::OK))
                 }
             },
             _ => unreachable!("o no"),
         }
     } else {
-        Json(json!({"errors": [{"detail": "You do not own this!"}]}))
+        Err(ApiError(String::from("crate does not exist!"), StatusCode::OK))
     }
 }
 
