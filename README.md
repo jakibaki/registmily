@@ -6,5 +6,5 @@ To do:
 
 - [x] Basic cargo registry functionality
 - [x] Session and ownership management using postgres + sqlx
-- [ ] OpenID Connect support for login
+- [x] OpenID Connect support for login
 - [ ] System for pulling crates from crates.io and reviewing diffs
