@@ -22,8 +22,6 @@ struct ApiErrorInfo {
 pub struct ApiError(pub String, pub StatusCode);
 
 
-// TODO: 
-
 impl From<sqlx::Error> for ApiError {
 	fn from(err: sqlx::Error) -> Self {
 		tracing::error!("Database error: {}", err);

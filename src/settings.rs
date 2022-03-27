@@ -2,7 +2,7 @@ use config::Config;
 
 
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct Settings {
     pub repo_path: String,
     pub storage_path: String,

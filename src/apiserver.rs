@@ -33,11 +33,6 @@ pub struct Error {
     pub detail: String,
 }
 
-#[derive(Clone)]
-struct DataPaths {
-    git_path: String,
-    storage_path: String,
-}
 
 #[async_trait]
 impl<B> FromRequest<B> for models::UserSession
@@ -78,12 +73,12 @@ where
 async fn publish(
     ContentLengthLimit(bytes): ContentLengthLimit<Bytes, { 1024 * 20_000 }>,
     sender: Extension<registry::SyncSender>,
-    data_paths: Extension<DataPaths>,
+    settings: Extension<settings::Settings>,
     pool: Extension<PgPool>,
     session: models::UserSession,
 ) -> Result<Json<Value>, ApiError> {
-    info!("{}", (*data_paths).git_path);
-    info!("{}", (*data_paths).storage_path);
+    info!("{}", (*settings).repo_path);
+    info!("{}", (*settings).storage_path);
 
     let mut trans = pool.begin().await?;
 
@@ -342,8 +337,8 @@ async fn remove_owners(
     ))
 }
 
-async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl IntoResponse {
-    let mut file_path = PathBuf::from(&data_paths.storage_path);
+async fn dl(Path(hash): Path<String>, settings: Extension<settings::Settings>) -> impl IntoResponse {
+    let mut file_path = PathBuf::from(&settings.storage_path);
     if hash.len() != 64 || hash.contains('.') || hash.contains('/') {
         return Err((StatusCode::NOT_FOUND, "File not found!"));
     }
@@ -369,8 +364,7 @@ async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl 
 
 fn build_router(
     sender: registry::SyncSender,
-    git_path: String,
-    storage_path: String,
+    settings: settings::Settings,
     pool: PgPool,
 ) -> Router {
     Router::new()
@@ -384,10 +378,7 @@ fn build_router(
             get(owners).put(add_owners).delete(remove_owners),
         )
         .layer(axum::extract::Extension(sender))
-        .layer(axum::extract::Extension(DataPaths {
-            git_path,
-            storage_path,
-        }))
+        .layer(axum::extract::Extension(settings))
         .layer(axum::extract::Extension(pool))
 }
 
@@ -410,9 +401,8 @@ pub async fn serve(
         .serve(
             build_router(
                 sender,
-                settings.repo_path.clone(),
-                settings.storage_path.clone(),
-                pool,
+                settings.clone(),
+                pool
             )
             .into_make_service(),
         )
