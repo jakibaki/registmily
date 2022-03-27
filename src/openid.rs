@@ -29,7 +29,7 @@ impl TokenHandler for OpenidProvider {
         _access_token: &str,
         token_data: TokenData<CodeTokenClaims<Self::Extra>>,
     ) -> CallbackResponse {
-        let mut trans = match __self.0.begin().await.map_err(ApiError::from) {
+        let mut trans = match self.0.begin().await.map_err(ApiError::from) {
             Ok(x) => x,
             Err(why) => {
                 return why.into_response();
