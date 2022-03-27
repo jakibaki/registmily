@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
-use crate::models::{self, User};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use crate::models;
+use sqlx::PgPool;
 
 use axum::{
     async_trait,
@@ -13,7 +13,6 @@ use axum::{
     Router,
 };
 use sha2::{Digest, Sha256};
-use tracing_subscriber::{fmt::MakeWriter, registry::SpanData};
 
 use crate::{apiresponse::ApiError, openid, registry, settings};
 use serde_json::{json, Value};
@@ -382,7 +381,7 @@ fn build_router(
             get(owners).put(add_owners).delete(remove_owners),
         )
         .layer(axum::extract::Extension(sender))
-        .layer(axum::extract::Extension(settings.clone()))
+        .layer(axum::extract::Extension(settings))
         .layer(axum::extract::Extension(pool))
         .layer(axum::extract::Extension(Arc::new(openid_client)))
 }
