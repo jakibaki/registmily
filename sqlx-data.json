@@ -138,6 +138,32 @@
     },
     "query": "DELETE FROM user_sessions WHERE ident = $1"
   },
+  "59778dac3708051e909f6e65437b1da6d70bc8869047caefa3dfb9a7d55fcebb": {
+    "describe": {
+      "columns": [
+        {
+          "name": "crate_name",
+          "ordinal": 0,
+          "type_info": "Text"
+        },
+        {
+          "name": "user_ident",
+          "ordinal": 1,
+          "type_info": "Text"
+        }
+      ],
+      "nullable": [
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "SELECT crate_name, user_ident FROM crate_owners WHERE crate_name = $1"
+  },
   "5c0eadd5b79b9c2c4336a336989e068e010127c16dbd8d80e9b97f111631ef2a": {
     "describe": {
       "columns": [],
