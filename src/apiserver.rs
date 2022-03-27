@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::models::{self, User};
 use sqlx::{postgres::PgPoolOptions, PgPool};
@@ -15,7 +15,7 @@ use axum::{
 use sha2::{Digest, Sha256};
 use tracing_subscriber::{fmt::MakeWriter, registry::SpanData};
 
-use crate::{apiresponse::ApiError, registry, settings};
+use crate::{apiresponse::ApiError, openid, registry, settings};
 use serde_json::{json, Value};
 use tracing::info;
 
@@ -31,12 +31,6 @@ pub struct ErrorResponse {
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Error {
     pub detail: String,
-}
-
-#[derive(Clone)]
-struct DataPaths {
-    git_path: String,
-    storage_path: String,
 }
 
 #[async_trait]
@@ -78,12 +72,12 @@ where
 async fn publish(
     ContentLengthLimit(bytes): ContentLengthLimit<Bytes, { 1024 * 20_000 }>,
     sender: Extension<registry::SyncSender>,
-    data_paths: Extension<DataPaths>,
+    settings: Extension<Arc<settings::Settings>>,
     pool: Extension<PgPool>,
     session: models::UserSession,
 ) -> Result<Json<Value>, ApiError> {
-    info!("{}", (*data_paths).git_path);
-    info!("{}", (*data_paths).storage_path);
+    info!("{}", (*settings).repo_path);
+    info!("{}", (*settings).storage_path);
 
     let mut trans = pool.begin().await?;
 
@@ -342,8 +336,11 @@ async fn remove_owners(
     ))
 }
 
-async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl IntoResponse {
-    let mut file_path = PathBuf::from(&data_paths.storage_path);
+async fn dl(
+    Path(hash): Path<String>,
+    settings: Extension<Arc<settings::Settings>>,
+) -> impl IntoResponse {
+    let mut file_path = PathBuf::from(&settings.storage_path);
     if hash.len() != 64 || hash.contains('.') || hash.contains('/') {
         return Err((StatusCode::NOT_FOUND, "File not found!"));
     }
@@ -369,12 +366,13 @@ async fn dl(Path(hash): Path<String>, data_paths: Extension<DataPaths>) -> impl 
 
 fn build_router(
     sender: registry::SyncSender,
-    git_path: String,
-    storage_path: String,
+    settings: Arc<settings::Settings>,
     pool: PgPool,
+    openid_client: openid_client::Client,
 ) -> Router {
     Router::new()
-        .route("/me", get(|| async { "uwu" }))
+        .route("/me", get(openid::me))
+        .route("/callback", get(openid_client::axum::code_callback::<()>))
         .route("/api/v1/crates/new", put(publish))
         .route("/api/v1/crates/:crate_name/:version/yank", delete(yank))
         .route("/api/v1/crates/:crate_name/:version/unyank", put(unyank))
@@ -384,11 +382,9 @@ fn build_router(
             get(owners).put(add_owners).delete(remove_owners),
         )
         .layer(axum::extract::Extension(sender))
-        .layer(axum::extract::Extension(DataPaths {
-            git_path,
-            storage_path,
-        }))
+        .layer(axum::extract::Extension(settings.clone()))
         .layer(axum::extract::Extension(pool))
+        .layer(axum::extract::Extension(Arc::new(openid_client)))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -406,13 +402,15 @@ pub async fn serve(
     settings: settings::Settings,
     pool: PgPool,
 ) -> Result<(), ApiServerError> {
+    let settings = Arc::new(settings);
+
     axum::Server::bind(&"0.0.0.0:8080".parse().unwrap())
         .serve(
             build_router(
                 sender,
-                settings.repo_path.clone(),
-                settings.storage_path.clone(),
-                pool,
+                settings.clone(),
+                pool.clone(),
+                openid::build_client(settings, pool).await,
             )
             .into_make_service(),
         )
