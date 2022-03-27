@@ -1,11 +1,11 @@
+mod apiresponse;
 mod apiserver;
+mod models;
+mod openid;
 mod registry;
 mod settings;
-mod models;
-mod apiresponse;
 use sqlx::postgres::PgPoolOptions;
 use tracing::{info, Level};
-
 
 #[tokio::main]
 async fn main() -> Result<(), apiserver::ApiServerError> {
@@ -18,8 +18,6 @@ async fn main() -> Result<(), apiserver::ApiServerError> {
 
     let repo_path = config.repo_path.clone();
     let storage_path = config.storage_path.clone();
-    
-
 
     let (sender, recv) = tokio::sync::mpsc::channel(u16::MAX as usize);
     let jh = std::thread::spawn(move || registry::handler(&repo_path, &storage_path, recv));
@@ -32,14 +30,13 @@ async fn main() -> Result<(), apiserver::ApiServerError> {
         .max_connections(config.database_connections)
         .connect(&config.database_url)
         .await?;
-    
+
     info!("Running migrations");
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     info!("Database setup done, starting api server");
 
     apiserver::serve(sender, config, pool).await?;
-
 
     jh.join().unwrap();
 

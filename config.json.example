@@ -3,4 +3,14 @@
     "storage_path": "storage",
     "database_url": "postgres://postgres:super_duper_secure_password@localhost/registmily",
     "database_connections": 5
+    "openid_auth_endpoint": "https://gitlab.com/oauth/authorize",
+    "openid_token_endpoint": "https://gitlab.com/oauth/token",
+    "openid_client_id": "uwu",
+    "openid_client_secret": "owo",
+    "openid_nonce": "noncy nonce nonce",
+    "jwt_key_config": {
+        "algorithm": "HS512",
+        "secret": "spooky_scary_secret",
+        "expires_in": 666421
+    }
 }

@@ -15,7 +15,6 @@ pub async fn db_test() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(session.ident, session_from_tok.ident);
     assert_eq!(session.token, session_from_tok.token);
 
-
     let new_crate = models::Crate::new(&mut trans, "owo").await?;
     models::CrateOwner::new(&mut trans, &new_crate.name, "peter").await?;
 
@@ -27,10 +26,8 @@ pub async fn db_test() -> Result<(), Box<dyn std::error::Error>> {
 
     assert!(!models::Crate::exists_by_ident(&mut trans, "owo").await?);
 
-
     let owners = models::CrateOwner::all_owners(&mut trans, "owo").await?;
     assert_eq!(owners.len(), 0);
-
 
     Ok(())
 }

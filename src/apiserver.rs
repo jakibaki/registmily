@@ -15,7 +15,7 @@ use axum::{
 use sha2::{Digest, Sha256};
 use tracing_subscriber::{fmt::MakeWriter, registry::SpanData};
 
-use crate::{apiresponse::ApiError, registry, settings};
+use crate::{apiresponse::ApiError, openid, registry, settings};
 use serde_json::{json, Value};
 use tracing::info;
 
@@ -32,7 +32,6 @@ pub struct ErrorResponse {
 pub struct Error {
     pub detail: String,
 }
-
 
 #[async_trait]
 impl<B> FromRequest<B> for models::UserSession
@@ -337,7 +336,10 @@ async fn remove_owners(
     ))
 }
 
-async fn dl(Path(hash): Path<String>, settings: Extension<Arc<settings::Settings>>) -> impl IntoResponse {
+async fn dl(
+    Path(hash): Path<String>,
+    settings: Extension<Arc<settings::Settings>>,
+) -> impl IntoResponse {
     let mut file_path = PathBuf::from(&settings.storage_path);
     if hash.len() != 64 || hash.contains('.') || hash.contains('/') {
         return Err((StatusCode::NOT_FOUND, "File not found!"));
@@ -366,9 +368,11 @@ fn build_router(
     sender: registry::SyncSender,
     settings: Arc<settings::Settings>,
     pool: PgPool,
+    openid_client: openid_client::Client,
 ) -> Router {
     Router::new()
-        .route("/me", get(|| async { "uwu" }))
+        .route("/me", get(openid::me))
+        .route("/callback", get(openid_client::axum::code_callback::<()>))
         .route("/api/v1/crates/new", put(publish))
         .route("/api/v1/crates/:crate_name/:version/yank", delete(yank))
         .route("/api/v1/crates/:crate_name/:version/unyank", put(unyank))
@@ -378,8 +382,9 @@ fn build_router(
             get(owners).put(add_owners).delete(remove_owners),
         )
         .layer(axum::extract::Extension(sender))
-        .layer(axum::extract::Extension(settings))
+        .layer(axum::extract::Extension(settings.clone()))
         .layer(axum::extract::Extension(pool))
+        .layer(axum::extract::Extension(Arc::new(openid_client)))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -397,12 +402,15 @@ pub async fn serve(
     settings: settings::Settings,
     pool: PgPool,
 ) -> Result<(), ApiServerError> {
+    let settings = Arc::new(settings);
+
     axum::Server::bind(&"0.0.0.0:8080".parse().unwrap())
         .serve(
             build_router(
                 sender,
-                Arc::new(settings),
-                pool
+                settings.clone(),
+                pool.clone(),
+                openid::build_client(settings, pool).await,
             )
             .into_make_service(),
         )

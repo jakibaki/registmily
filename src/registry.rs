@@ -86,11 +86,7 @@ impl Package {
         Self {
             name: pub_pkg.name,
             vers: pub_pkg.vers,
-            deps: pub_pkg
-                .deps
-                .into_iter()
-                .map(PackageDep::from)
-                .collect(),
+            deps: pub_pkg.deps.into_iter().map(PackageDep::from).collect(),
             cksum: checksum,
             features: pub_pkg.features,
             yanked: false,
@@ -136,7 +132,6 @@ pub struct Registry {
     storage_location: String,
 }
 
-
 fn git_credentials_callback(
     _user: &str,
     user_from_url: Option<&str>,
@@ -154,7 +149,6 @@ fn git_credentials_callback(
 
     git2::Cred::ssh_key(user, None, &ssh_key_path, None)
 }
-
 
 pub fn get_package_git_path(repo_path: &str, package_name: &str) -> PathBuf {
     let mut folder = get_package_git_folder(repo_path, package_name);
@@ -185,13 +179,6 @@ pub fn get_package_git_folder(repo_path: &str, package_name: &str) -> PathBuf {
         }
     }
     path
-}
-
-fn crate_exists(repo_path: &str, crate_name: &str) -> bool {
-    assert!(!crate_name.contains('.'));
-    assert!(!crate_name.contains('/'));
-    let path = get_package_git_path(repo_path, crate_name);
-    Path::new(&path).exists()
 }
 
 impl Registry {
