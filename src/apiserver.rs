@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::models::{self, User};
 use sqlx::{postgres::PgPoolOptions, PgPool};
@@ -73,7 +73,7 @@ where
 async fn publish(
     ContentLengthLimit(bytes): ContentLengthLimit<Bytes, { 1024 * 20_000 }>,
     sender: Extension<registry::SyncSender>,
-    settings: Extension<settings::Settings>,
+    settings: Extension<Arc<settings::Settings>>,
     pool: Extension<PgPool>,
     session: models::UserSession,
 ) -> Result<Json<Value>, ApiError> {
@@ -337,7 +337,7 @@ async fn remove_owners(
     ))
 }
 
-async fn dl(Path(hash): Path<String>, settings: Extension<settings::Settings>) -> impl IntoResponse {
+async fn dl(Path(hash): Path<String>, settings: Extension<Arc<settings::Settings>>) -> impl IntoResponse {
     let mut file_path = PathBuf::from(&settings.storage_path);
     if hash.len() != 64 || hash.contains('.') || hash.contains('/') {
         return Err((StatusCode::NOT_FOUND, "File not found!"));
@@ -364,7 +364,7 @@ async fn dl(Path(hash): Path<String>, settings: Extension<settings::Settings>) -
 
 fn build_router(
     sender: registry::SyncSender,
-    settings: settings::Settings,
+    settings: Arc<settings::Settings>,
     pool: PgPool,
 ) -> Router {
     Router::new()
@@ -401,7 +401,7 @@ pub async fn serve(
         .serve(
             build_router(
                 sender,
-                settings.clone(),
+                Arc::new(settings),
                 pool
             )
             .into_make_service(),
